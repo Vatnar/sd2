@@ -2,7 +2,8 @@
 #include <cstring>
 #include <thread>
 #include <unistd.h>
-
+#include <x86intrin.h>
+#include <time.h>
 
 // glfw and vulkan
 
@@ -32,16 +33,17 @@ static vk::detail::DynamicLoader g_vulkan_dynamic_loader{};
 
 
 struct String8 {
-  U8* str;
+  U8 *str;
   U64 size;
 };
-String8 str8(U8* str, U64 size) {
+String8 str8(U8 *str, U64 size) {
   String8 result{str, size};
   return result;
 }
-#define str8_lit(S) str8((U8*)(S), sizeof(S) - 1)
+#define str8_lit(S) str8((U8 *)(S), sizeof(S) - 1)
 
 #include "arena.cpp"
+#include "internal/thread_ctx.hpp"
 #include "main2.cpp"
 
 
@@ -50,41 +52,136 @@ struct AppParams {
   S32     width{};
   S32     height{};
 };
-void glfw_error_callback(int ec, const char* desc) {
+void glfw_error_callback(int ec, char const *desc) {
   printf("%d: %s\n", ec, desc);
 }
+enum class WindowEventType {
+  NONE,
+  RESIZE,
+  KEY,
+  SCROLL,
+  CURSOR,
+  MBUTTON,
+  CLOSE,
+  REFRESH,
+  TEXT
+};
+struct WResizeEvent {
+  S32 width, height;
+};
+struct WKeyEvent {
+  S32 key, scancode, action, mods;
+};
+struct WScrollEvent {
+  F64 xoffset, yoffset;
+};
+struct WCursorEvent {
+  F64 xpos, ypos;
+};
+struct WMButtonEvent {
+  S32 button, action, mods;
+};
+struct WTextEvent {
+  U32 keycode;
+};
+
+struct WindowEvent {
+  WindowEventType type;
+  union {
+    WResizeEvent  resize;
+    WKeyEvent     key;
+    WScrollEvent  scroll;
+    WCursorEvent  cursor;
+    WMButtonEvent mbutton;
+    WTextEvent    text;
+  };
+};
+// overwrites on full
+template<typename T, U64 SIZE = 256>
+  requires((SIZE & (SIZE - 1)) == 0)
+struct RingBuffer {
+  T buffer[SIZE]{};
+
+  U64  head{};
+  U64  tail{};
+  bool full{false};
+
+  static constexpr U64 mask = SIZE - 1;
+
+  bool empty() const { return !full && head == tail; }
+
+  void push(T item) {
+    buffer[head & mask] = item;
+    head++;
+    if (full) {
+      tail++;
+    } else if ((head & mask) == (tail & mask)) {
+      full = true;
+    }
+  }
+  bool pop(T &out) {
+    if (empty())
+      return false;
+    out = buffer[tail & mask];
+    tail++;
+    full = false;
+    return true;
+  }
+};
 
 struct Window {
-  GLFWwindow* glfw_window{};
+  GLFWwindow *glfw_window{};
   // holds a ptr to the event system which callbacks can use
-  bool framebuffer_resized = false;
+  bool                    framebuffer_resized = false;
+  RingBuffer<WindowEvent> events;
 
+  static void dispatch_resize(GLFWwindow *glfw_window, S32 width, S32 height) {
+    Window *window = static_cast<Window *>(glfwGetWindowUserPointer(glfw_window));
+    window->events.push(WindowEvent{
+        .type   = WindowEventType::RESIZE,
+        .resize = {width, height}
+    });
+  }
+  static void dispatch_key(GLFWwindow *glfw_window, S32 key, S32 scancode, S32 action, S32 mods) {
+    Window *window = static_cast<Window *>(glfwGetWindowUserPointer(glfw_window));
+    window->events.push({
+        .type = WindowEventType::KEY,
+        .key  = {key, scancode, action, mods}
+    });
+  }
+  static void dispatch_scroll(GLFWwindow *glfw_window, F64 xoffset, F64 yoffset) {
+    Window *window = static_cast<Window *>(glfwGetWindowUserPointer(glfw_window));
+    window->events.push({
+        .type   = WindowEventType::SCROLL,
+        .scroll = {xoffset, yoffset}
+    });
+  }
+  static void dispatch_cursor(GLFWwindow *glfw_window, F64 xpos, F64 ypos) {
+    Window *window = static_cast<Window *>(glfwGetWindowUserPointer(glfw_window));
+    window->events.push({
+        .type   = WindowEventType::CURSOR,
+        .cursor = {xpos, ypos}
+    });
+  }
+  static void dispatch_mouse_button(GLFWwindow *glfw_window, S32 button, S32 action, S32 mods) {
+    Window *window = static_cast<Window *>(glfwGetWindowUserPointer(glfw_window));
+    window->events.push({
+        .type    = WindowEventType::MBUTTON,
+        .mbutton = {button, action, mods}
+    });
+  }
 
-  static void dispatch_resize(GLFWwindow* glfw_window, S32 width, S32 height) {
-    Window* window              = static_cast<Window*>(glfwGetWindowUserPointer(glfw_window));
-    window->framebuffer_resized = true;
+  static void dispatch_close(GLFWwindow *glfw_window) {
+    Window *window = static_cast<Window *>(glfwGetWindowUserPointer(glfw_window));
+    window->events.push({.type = WindowEventType::CLOSE, .resize = {}});
   }
-  static void dispatch_key(GLFWwindow* glfw_window, S32 key, S32 scancode, S32 action, S32 mods) {
-    Window* window = static_cast<Window*>(glfwGetWindowUserPointer(glfw_window));
+  static void dispatch_refresh(GLFWwindow *glfw_window) {
+    Window *window = static_cast<Window *>(glfwGetWindowUserPointer(glfw_window));
+    window->events.push({.type = WindowEventType::REFRESH, .resize = {}});
   }
-  static void dispatch_scroll(GLFWwindow* glfw_window, F64 xoffset, F64 yoffset) {
-    Window* window = static_cast<Window*>(glfwGetWindowUserPointer(glfw_window));
-  }
-  static void dispatch_cursor(GLFWwindow* glfw_window, F64 xpos, F64 ypos) {
-    Window* window = static_cast<Window*>(glfwGetWindowUserPointer(glfw_window));
-  }
-  static void dispatch_mouse_button(GLFWwindow* glfw_window, S32 button, S32 action, S32 mods) {
-    Window* window = static_cast<Window*>(glfwGetWindowUserPointer(glfw_window));
-  }
-
-  static void dispatch_close(GLFWwindow* glfw_window) {
-    Window* window = static_cast<Window*>(glfwGetWindowUserPointer(glfw_window));
-  }
-  static void dispatch_refresh(GLFWwindow* glfw_window) {
-    Window* window = static_cast<Window*>(glfwGetWindowUserPointer(glfw_window));
-  }
-  static void dispatch_char(GLFWwindow* glfw_window, U32 keycode) {
-    Window* window = static_cast<Window*>(glfwGetWindowUserPointer(glfw_window));
+  static void dispatch_char(GLFWwindow *glfw_window, U32 keycode) {
+    Window *window = static_cast<Window *>(glfwGetWindowUserPointer(glfw_window));
+    window->events.push({.type = WindowEventType::TEXT, .text = {keycode}});
   }
 };
 
@@ -103,7 +200,7 @@ void abort_if_vk_error(vk::Result res, std::string_view message = {}) {
 template<typename T> concept VkResultValue = requires { typename vk::ResultValueType<T>::type; };
 template<typename T>
   requires VkResultValue<T>
-T abort_if_vk_error(const vk::ResultValue<T>& ret, std::string_view message = {}) {
+T abort_if_vk_error(vk::ResultValue<T> const &ret, std::string_view message = {}) {
   abort_if_vk_error(ret.result, message);
   return ret.value;
 }
@@ -124,15 +221,17 @@ struct QueueFamilyIndices {
 };
 
 
-constexpr U32      MAX_QUEUE_FAMILY_COUNT = 8;
 QueueFamilyIndices find_queue_families(vk::PhysicalDevice device, vk::SurfaceKHR surface) {
+  Temp               scratch = scratch_begin(0, 0);
   QueueFamilyIndices indices{};
-  U32                queue_family_count = 0;
-  device.getQueueFamilyProperties(&queue_family_count, nullptr);
-  vk::QueueFamilyProperties queue_family_properties[MAX_QUEUE_FAMILY_COUNT]{};
-  device.getQueueFamilyProperties(&queue_family_count, queue_family_properties);
-  ASSERT(queue_family_count <= MAX_QUEUE_FAMILY_COUNT);
 
+  U32 queue_family_count = 0;
+  device.getQueueFamilyProperties(&queue_family_count, nullptr);
+
+
+  auto *queue_family_properties =
+      scratch.arena->push_array<vk::QueueFamilyProperties>(queue_family_count);
+  device.getQueueFamilyProperties(&queue_family_count, queue_family_properties);
   for (U32 i = 0; i < queue_family_count; ++i) {
     vk::QueueFamilyProperties queue_family = queue_family_properties[i];
 
@@ -150,67 +249,67 @@ QueueFamilyIndices find_queue_families(vk::PhysicalDevice device, vk::SurfaceKHR
       break;
     }
   }
+  scratch.end();
   return indices;
 }
 
-bool check_device_extension_support(vk::PhysicalDevice device, const char* extension_name) {
-  U32 ext_count; // real ext count is 279..
+bool check_device_extension_support(vk::PhysicalDevice device, char const *extension_name) {
+  Temp scratch = scratch_begin(0, 0);
+  U32  ext_count; // real ext count is 279..
+  bool result = false;
   abort_if_vk_error(device.enumerateDeviceExtensionProperties(nullptr, &ext_count, nullptr));
 
-  // TODO: replace with arena dyn array thingy later
-  vk::ExtensionProperties available[300];
-  U32                     count = 300;
-  abort_if_vk_error(device.enumerateDeviceExtensionProperties(nullptr, &count, available));
+  auto *available = scratch.arena->push_array<vk::ExtensionProperties>(ext_count);
+  abort_if_vk_error(device.enumerateDeviceExtensionProperties(nullptr, &ext_count, available));
 
-  for (U32 i = 0; i < count; ++i) {
+  for (U32 i = 0; i < ext_count; ++i) {
     if (std::strcmp(available[i].extensionName, extension_name) == 0)
-      return true;
+      result = true;
   }
-  return false;
+  scratch.end();
+  return result;
 }
 
 struct SwapchainSupport {
   vk::SurfaceCapabilitiesKHR capabilities;
   U32                        format_count;
-  vk::SurfaceFormatKHR       formats[16];
+  vk::SurfaceFormatKHR      *formats;
   U32                        mode_count;
-  vk::PresentModeKHR         modes[8];
+  vk::PresentModeKHR        *modes;
 };
 
-SwapchainSupport query_swapchain_support(vk::PhysicalDevice device, vk::SurfaceKHR surface) {
+SwapchainSupport
+query_swapchain_support(vk::PhysicalDevice device, vk::SurfaceKHR surface, Arena *arena) {
   SwapchainSupport support{};
   support.capabilities = abort_if_vk_error(device.getSurfaceCapabilitiesKHR(surface));
 
-  support.format_count = 16;
   abort_if_vk_error(device.getSurfaceFormatsKHR(surface, &support.format_count, nullptr));
-  if (support.format_count > 16)
-    support.format_count = 16;
-  if (support.format_count > 0)
-    abort_if_vk_error(device.getSurfaceFormatsKHR(surface, &support.format_count, support.formats));
+  support.formats = arena->push_array<vk::SurfaceFormatKHR>(support.format_count);
 
-  support.mode_count = 8;
+  abort_if_vk_error(device.getSurfaceFormatsKHR(surface, &support.format_count, support.formats));
+
   abort_if_vk_error(device.getSurfacePresentModesKHR(surface, &support.mode_count, nullptr));
-  if (support.mode_count > 8)
-    support.mode_count = 8;
-  if (support.mode_count > 0)
-    abort_if_vk_error(
-        device.getSurfacePresentModesKHR(surface, &support.mode_count, support.modes));
+  support.modes = arena->push_array<vk::PresentModeKHR>(support.mode_count);
+  abort_if_vk_error(device.getSurfacePresentModesKHR(surface, &support.mode_count, support.modes));
 
   return support;
 }
 
 RatedDevice pick_best_physical_device(vk::Instance instance, vk::SurfaceKHR surface) {
-  U32 device_count = 0;
+  Temp scratch      = scratch_begin(0, 0);
+  U32  device_count = 0;
   abort_if_vk_error(instance.enumeratePhysicalDevices(&device_count, nullptr));
 
-  vk::PhysicalDevice devices[10];
+  // TODO: remove — duplicate call
+  abort_if_vk_error(instance.enumeratePhysicalDevices(&device_count, nullptr));
+  auto *devices = scratch.arena->push_array<vk::PhysicalDevice>(device_count);
   abort_if_vk_error(instance.enumeratePhysicalDevices(&device_count, devices));
 
   vk::PhysicalDevice best_device = nullptr;
   U32                max_score   = 0;
 
   for (U32 i = 0; i < device_count; i++) {
-    vk::PhysicalDevice& device = devices[i];
+    vk::PhysicalDevice &device = devices[i];
 
     QueueFamilyIndices indices = find_queue_families(device, surface);
     if (!indices.is_complete())
@@ -219,7 +318,7 @@ RatedDevice pick_best_physical_device(vk::Instance instance, vk::SurfaceKHR surf
     if (!check_device_extension_support(device, VK_KHR_SWAPCHAIN_EXTENSION_NAME))
       continue;
 
-    SwapchainSupport swapchain_support = query_swapchain_support(device, surface);
+    SwapchainSupport swapchain_support = query_swapchain_support(device, surface, scratch.arena);
     if (swapchain_support.format_count == 0 || swapchain_support.mode_count == 0)
       continue;
 
@@ -244,20 +343,21 @@ RatedDevice pick_best_physical_device(vk::Instance instance, vk::SurfaceKHR surf
       best_device = device;
     }
   }
+  scratch.end();
   return {best_device, max_score};
 }
 
-constexpr U32 MAX_SWAPCHAIN_IMAGES = 8;
-
-void recreate_swapchain(GLFWwindow*        glfw_window,
+// TODO: swapchain_images/views arrays can overrun if image count increases on recreate.
+// Need to re-allocate from app_arena or use a swapchain-specific arena.
+void recreate_swapchain(GLFWwindow        *glfw_window,
                         vk::Device         vk_device,
                         vk::Image          swapchain_images[],
                         vk::ImageView      swapchain_image_view[],
-                        U32&               swapchain_image_count,
-                        vk::SwapchainKHR&  vk_swapchain,
+                        U32               &swapchain_image_count,
+                        vk::SwapchainKHR  &vk_swapchain,
                         vk::PhysicalDevice vk_phys_dev,
                         vk::SurfaceKHR     vk_surface,
-                        vk::Extent2D&      swapchain_extent,
+                        vk::Extent2D      &swapchain_extent,
                         vk::Format         swapchain_image_format,
                         vk::ColorSpaceKHR  swapchain_color_space,
                         vk::PresentModeKHR present_mode) {
@@ -330,10 +430,6 @@ void recreate_swapchain(GLFWwindow*        glfw_window,
     vk_device.destroySwapchainKHR(old_swapchain, nullptr);
   }
 
-  U32 actual_image_count = 0;
-  abort_if_vk_error(vk_device.getSwapchainImagesKHR(vk_swapchain, &actual_image_count, nullptr));
-  ASSERT_ALWAYS(actual_image_count <= MAX_SWAPCHAIN_IMAGES);
-  swapchain_image_count = actual_image_count;
   abort_if_vk_error(
       vk_device.getSwapchainImagesKHR(vk_swapchain, &swapchain_image_count, swapchain_images));
 
@@ -357,8 +453,8 @@ void recreate_swapchain(GLFWwindow*        glfw_window,
 static VKAPI_ATTR
     VkBool32 VKAPI_CALL debug_callback(VkDebugUtilsMessageSeverityFlagBitsEXT      message_severity,
                                        VkDebugUtilsMessageTypeFlagsEXT             message_type,
-                                       const VkDebugUtilsMessengerCallbackDataEXT* p_callback_data,
-                                       void*                                       p_user_data) {
+                                       const VkDebugUtilsMessengerCallbackDataEXT *p_callback_data,
+                                       void                                       *p_user_data) {
   if (message_severity >= VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT)
     std::fprintf(stderr, "[VK] %s\n", p_callback_data->pMessage);
   return VK_FALSE;
@@ -366,27 +462,30 @@ static VKAPI_ATTR
 #endif
 
 bool check_validation_layer_support() {
-  U32 layer_count;
-  if (vkEnumerateInstanceLayerProperties(&layer_count, nullptr) != VK_SUCCESS)
-    return false;
+  Temp scratch     = scratch_begin(0, 0);
+  U32  layer_count = 0;
+  bool result      = false;
 
-  VkLayerProperties available_layers[64];
-  U32               count = layer_count > 64 ? 64 : layer_count;
-  if (vkEnumerateInstanceLayerProperties(&count, available_layers) != VK_SUCCESS)
-    return false;
+  // TODO: consider not requerying this if this is called a lot of times. fine for one offs though
+  abort_if_vk_error(vk::enumerateInstanceLayerProperties(&layer_count, nullptr));
+  auto *available_layers = scratch.arena->push_array<vk::LayerProperties>(layer_count);
+  abort_if_vk_error(vk::enumerateInstanceLayerProperties(&layer_count, available_layers));
 
-  for (U32 i = 0; i < count; ++i) {
-    if (std::strcmp(available_layers[i].layerName, "VK_LAYER_KHRONOS_validation") == 0)
-      return true;
+  for (U32 i = 0; i < layer_count; ++i) {
+    if (std::strcmp(available_layers[i].layerName, "VK_LAYER_KHRONOS_validation") == 0) {
+      result = true;
+      break;
+    }
   }
-  return false;
+  scratch.end();
+  return result;
 }
 
 constexpr U32 MAX_EXTENSIONS = 16;
 
-U32 get_required_extensions(const char** out_extensions, U32 max_extensions) {
+U32 get_required_extensions(char const **out_extensions, U32 max_extensions) {
   U32          glfw_count;
-  const char** glfw_exts = glfwGetRequiredInstanceExtensions(&glfw_count);
+  char const **glfw_exts = glfwGetRequiredInstanceExtensions(&glfw_count);
 
   U32 count = 0;
   for (U32 i = 0; i < glfw_count && count < max_extensions; ++i)
@@ -400,11 +499,12 @@ U32 get_required_extensions(const char** out_extensions, U32 max_extensions) {
 }
 
 int main() {
-  Arena* app_arena = arena_alloc({.name = "App arena"});
-  Arena* frame_arena =
+  thread_ctx_init();
+  Arena *app_arena = arena_alloc({.name = "App arena"});
+  Arena *frame_arena =
       arena_alloc({.flags = ArenaFlags::NO_CHAIN, // we rather wanna resize this from start then
                    .name  = "Frame arena"});
-  Arena*    init_arena = arena_alloc({.name = "init"});
+  Arena    *init_arena = arena_alloc({.name = "init"});
   AppParams params{
       .name   = str8_lit("sd2"),
       .width  = 800,
@@ -420,7 +520,7 @@ int main() {
   glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
 
   window.glfw_window      = glfwCreateWindow(params.width, params.height, "sd2", nullptr, nullptr);
-  GLFWwindow* glfw_window = window.glfw_window;
+  GLFWwindow *glfw_window = window.glfw_window;
 
   glfwSetWindowUserPointer(glfw_window, &window);
 
@@ -436,6 +536,12 @@ int main() {
   glfwSetWindowRefreshCallback(glfw_window, Window::dispatch_refresh);
   glfwSetCharCallback(glfw_window, Window::dispatch_char);
 
+  // TODO: decouple target from monitor refresh
+  GLFWmonitor *primary_monitor = glfwGetPrimaryMonitor();
+  const GLFWvidmode *video_mode = glfwGetVideoMode(primary_monitor);
+  U32 monitor_hz = video_mode->refreshRate > 0 ? video_mode->refreshRate : 60;
+  F64 target_frame_ms = 1000.0 / monitor_hz;
+  printf("Monitor: %u Hz (target: %.3f ms/frame)\n", monitor_hz, target_frame_ms);
 
   //~ vulkan init
   // init with window
@@ -454,6 +560,7 @@ int main() {
     TRAP();
   }
 
+  // TODO: debug_create_info is gated by SD2_DEBUG but referenced unconditionally at .pNext below
   VkDebugUtilsMessengerCreateInfoEXT debug_create_info{
       .sType           = VK_STRUCTURE_TYPE_DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT,
       .pNext           = nullptr,
@@ -470,12 +577,12 @@ int main() {
 #endif
 
 
-  // TODO: arena stuff
-  const char** extensions          = init_arena->push_array<const char*>(MAX_EXTENSIONS);
+  const char **extensions          = init_arena->push_array<const char *>(MAX_EXTENSIONS);
   U32          ext_count           = get_required_extensions(extensions, MAX_EXTENSIONS);
-  const char*  validation_layers[] = {"VK_LAYER_KHRONOS_validation"};
+  char const  *validation_layers[] = {"VK_LAYER_KHRONOS_validation"};
 
   vk::InstanceCreateInfo inst_info{
+      // TODO: pNext debug messenger + explicit vkCreateDebugUtilsMessengerEXT below = duplicate
       .pNext = &debug_create_info,
 #ifdef SD2_DEBUG
       .pApplicationInfo        = &app_info,
@@ -496,6 +603,7 @@ int main() {
 #ifdef SD2_DEBUG
   VkDebugUtilsMessengerEXT debug_messenger = VK_NULL_HANDLE;
   {
+    // TODO: explicit messenger + pNext chain above = duplicate callbacks
     PFN_vkCreateDebugUtilsMessengerEXT func =
         (PFN_vkCreateDebugUtilsMessengerEXT)vk_get_instance_proc_addr(
             static_cast<VkInstance>(vk_instance),
@@ -537,7 +645,7 @@ int main() {
     };
   }
 
-  const char* device_extensions[] = {VK_KHR_SWAPCHAIN_EXTENSION_NAME};
+  char const *device_extensions[] = {VK_KHR_SWAPCHAIN_EXTENSION_NAME};
 
   vk::PhysicalDeviceFeatures         device_features{};
   vk::PhysicalDeviceVulkan13Features device_features13{.pNext            = nullptr,
@@ -566,33 +674,19 @@ int main() {
 
 
   //~ swapchain
-  // TODO: do this in scratch
   vk::SurfaceCapabilitiesKHR capabilities{};
+  // TODO: consider using getSurfaceCapabilities2KHR instead
   abort_if_vk_error(vk_phys_dev.getSurfaceCapabilitiesKHR(vk_surface, &capabilities));
-  constexpr U32 MAX_FORMATS = 16;
-  constexpr U32 MAX_MODES   = 8;
 
-  // TODO: scratch arena alloc
-  vk::SurfaceFormatKHR formats[MAX_FORMATS];
-  vk::PresentModeKHR   present_modes[MAX_MODES];
-
-
-  U32 format_count = MAX_FORMATS;
+  U32 format_count = 0;
   abort_if_vk_error(vk_phys_dev.getSurfaceFormatsKHR(vk_surface, &format_count, nullptr));
-  if (format_count > MAX_FORMATS)
-    format_count = MAX_FORMATS;
-  if (format_count != 0) {
-    abort_if_vk_error(vk_phys_dev.getSurfaceFormatsKHR(vk_surface, &format_count, formats));
-  }
+  auto *formats = init_arena->push_array<vk::SurfaceFormatKHR>(format_count);
+  abort_if_vk_error(vk_phys_dev.getSurfaceFormatsKHR(vk_surface, &format_count, formats));
 
-  U32 mode_count = MAX_MODES;
+  U32 mode_count = 0;
   abort_if_vk_error(vk_phys_dev.getSurfacePresentModesKHR(vk_surface, &mode_count, nullptr));
-  if (mode_count > MAX_MODES)
-    mode_count = MAX_MODES;
-  if (mode_count != 0) {
-    abort_if_vk_error(
-        vk_phys_dev.getSurfacePresentModesKHR(vk_surface, &mode_count, present_modes));
-  }
+  auto *present_modes = init_arena->push_array<vk::PresentModeKHR>(mode_count);
+  abort_if_vk_error(vk_phys_dev.getSurfacePresentModesKHR(vk_surface, &mode_count, present_modes));
 
   vk::Format        chosen_format      = vk::Format::eB8G8R8A8Srgb;
   vk::ColorSpaceKHR chosen_color_space = vk::ColorSpaceKHR::eSrgbNonlinear;
@@ -638,7 +732,7 @@ int main() {
 
   vk::SharingMode sharing_mode             = vk::SharingMode::eExclusive;
   U32             queue_family_index_count = 0;
-  U32*            p_queue_family_indices   = nullptr;
+  U32            *p_queue_family_indices   = nullptr;
 
   if (queue_indices.graphics_index != queue_indices.present_index) {
     sharing_mode             = vk::SharingMode::eConcurrent;
@@ -672,14 +766,13 @@ int main() {
   U32 swapchain_image_count = 0;
   abort_if_vk_error(vk_device.getSwapchainImagesKHR(vk_swapchain, &swapchain_image_count, nullptr));
 
-  if (swapchain_image_count > MAX_SWAPCHAIN_IMAGES) {
-    swapchain_image_count = MAX_SWAPCHAIN_IMAGES;
-  }
 
-  vk::Image     swapchain_images[MAX_SWAPCHAIN_IMAGES];
-  vk::ImageView swapchain_image_views[MAX_SWAPCHAIN_IMAGES]{};
-  bool          image_initialized[MAX_SWAPCHAIN_IMAGES]{};
-  vk::Fence     images_in_flight[MAX_SWAPCHAIN_IMAGES]{};
+  // TODO: these must be re-allocable on swapchain recreate (image count can change)
+  auto *swapchain_images      = app_arena->push_array<vk::Image>(swapchain_image_count);
+  auto *swapchain_image_views = app_arena->push_array<vk::ImageView>(swapchain_image_count);
+  auto *image_initialized     = app_arena->push_array<bool>(swapchain_image_count);
+  auto *images_in_flight      = app_arena->push_array<vk::Fence>(swapchain_image_count);
+
   abort_if_vk_error(
       vk_device.getSwapchainImagesKHR(vk_swapchain, &swapchain_image_count, swapchain_images));
 
@@ -731,11 +824,75 @@ int main() {
   init_arena = arena_release(init_arena);
 
   //~ window loop
-  U32 current_frame = 0;
+  U64 absolute_frame_index = 0;
+  (void)absolute_frame_index;
+  U32 current_frame        = 0;
   while (!glfwWindowShouldClose(glfw_window)) {
+    struct timespec t0, t_wait, t1, t2;
+    U64 c0;
+    clock_gettime(CLOCK_MONOTONIC, &t0);
+    c0 = __rdtsc();
     frame_arena->clear();
     glfwPollEvents();
-    Window* window = static_cast<Window*>(glfwGetWindowUserPointer(glfw_window));
+    WindowEvent event{};
+    while (window.events.pop(event)) {
+      switch (event.type) {
+        using enum WindowEventType;
+        case NONE: {
+          break;
+        }
+        case RESIZE: {
+          window.framebuffer_resized = true;
+          break;
+        }
+        case KEY: {
+          WKeyEvent &key = event.key;
+          printf("%d, %d, %d, %d\n", key.key, key.action, key.mods, key.scancode);
+          break;
+        }
+        case SCROLL: {
+          break;
+        }
+        case CURSOR: {
+          break;
+        }
+        case MBUTTON: {
+          WMButtonEvent &mbutton = event.mbutton;
+          char const    *action  = mbutton.action == GLFW_PRESS ? "Pressed" : "Released";
+          switch (mbutton.button) {
+            default: {
+              printf("other mouse button: %d\n", mbutton.button);
+              break;
+            }
+            case 0: {
+              printf("left click %s\n", action);
+              break;
+            }
+            case 1: {
+              printf("right click %s\n", action);
+              break;
+            }
+            case 2: {
+              printf("middle click %s\n", action);
+              break;
+            }
+          }
+          switch (mbutton.action)
+            break;
+        }
+        case CLOSE: {
+          break;
+        }
+        case REFRESH: {
+          break;
+        }
+        case TEXT: {
+          break;
+        }
+      }
+    }
+    Window *window = static_cast<Window *>(glfwGetWindowUserPointer(glfw_window));
+    clock_gettime(CLOCK_MONOTONIC, &t_wait);
     abort_if_vk_error(
         vk_device.waitForFences(1, &in_flight_fences[current_frame], VK_TRUE, UINT64_MAX));
 
@@ -780,6 +937,7 @@ int main() {
           vk_device.waitForFences(1, &images_in_flight[image_index], VK_TRUE, UINT64_MAX));
     }
     images_in_flight[image_index] = in_flight_fences[current_frame];
+    clock_gettime(CLOCK_MONOTONIC, &t1);
     //~ safe to submit
     abort_if_vk_error(vk_device.resetFences(1, &in_flight_fences[current_frame]));
 
@@ -807,6 +965,7 @@ int main() {
     vk::DependencyInfo dep_info_render{.imageMemoryBarrierCount = 1,
                                        .pImageMemoryBarriers    = &layout_to_render_barrier};
     cmd.pipelineBarrier2(dep_info_render);
+
 
     vk::ClearValue clear_color{
         std::array{0.05f, 0.05f, 0.15f, 1.0f}
@@ -864,9 +1023,9 @@ int main() {
         .pNext              = nullptr,
         .waitSemaphoreCount = 1,
         .pWaitSemaphores =
-            reinterpret_cast<const VkSemaphore*>(&render_finished_semaphores[current_frame]),
+            reinterpret_cast<VkSemaphore const *>(&render_finished_semaphores[current_frame]),
         .swapchainCount = 1,
-        .pSwapchains    = reinterpret_cast<const VkSwapchainKHR*>(&vk_swapchain),
+        .pSwapchains    = reinterpret_cast<VkSwapchainKHR const *>(&vk_swapchain),
         .pImageIndices  = &image_index,
         .pResults       = nullptr};
 
@@ -895,8 +1054,69 @@ int main() {
       std::fprintf(stderr, "vkQueuePresentKHR failed: %d\n", present_res);
       TRAP();
     }
+    clock_gettime(CLOCK_MONOTONIC, &t2);
+    U64 c2 = __rdtsc();
+
+    // ~ FPS limit (temporary: tied to monitor refresh)
+    {
+      F64 elapsed = (t2.tv_sec - t0.tv_sec) * 1000.0
+                  + (t2.tv_nsec - t0.tv_nsec) / 1e6;
+      F64 remaining = target_frame_ms - elapsed;
+      if (remaining > 2.0) {
+        struct timespec ts = {
+            .tv_sec  = 0,
+            .tv_nsec = (long)((remaining - 1.5) * 1e6)
+        };
+        clock_nanosleep(CLOCK_MONOTONIC, 0, &ts, nullptr);
+      }
+      if (remaining > 0) {
+        struct timespec now;
+        do {
+          clock_gettime(CLOCK_MONOTONIC, &now);
+        } while ((now.tv_sec - t0.tv_sec) * 1000.0
+               + (now.tv_nsec - t0.tv_nsec) / 1e6 < target_frame_ms);
+      }
+    }
+    struct timespec t_frame_end;
+    clock_gettime(CLOCK_MONOTONIC, &t_frame_end);
+
     // Toggle frames-in-flight trackers
+    absolute_frame_index++;
     current_frame = (current_frame + 1) % MAX_FRAMES_IN_FLIGHT;
+
+    // --- TIMING ---
+    F64 total_ms   = (t_frame_end.tv_sec - t0.tv_sec) * 1000.0
+                   + (t_frame_end.tv_nsec - t0.tv_nsec) / 1e6;
+    F64 work_ms    = (t_wait.tv_sec - t0.tv_sec) * 1000.0
+                   + (t_wait.tv_nsec - t0.tv_nsec) / 1e6
+                   + (t2.tv_sec - t1.tv_sec) * 1000.0
+                   + (t2.tv_nsec - t1.tv_nsec) / 1e6;
+    F64 wait_ms    = total_ms - work_ms;
+    U64 total_cycles = c2 - c0;
+
+    local_persist F64  debug_accum_ms = 0;
+    local_persist U32  debug_frames   = 0;
+    local_persist F64  debug_work_sum = 0;
+    local_persist U64  debug_cycle_sum = 0;
+
+    debug_accum_ms += total_ms;
+    debug_frames++;
+    debug_work_sum += work_ms;
+    debug_cycle_sum += total_cycles;
+
+    if (debug_accum_ms >= 1000.0) {
+      F64 fps = debug_frames / (debug_accum_ms / 1000.0);
+      printf("Frames: %-4u | work avg: %6.3f ms | total avg: %6.3f ms | cycles avg: %-8llu | FPS: %6.1f\n",
+             debug_frames,
+             debug_work_sum / debug_frames,
+             debug_accum_ms / debug_frames,
+             (unsigned long long)(debug_cycle_sum / debug_frames),
+             fps);
+      debug_accum_ms = 0;
+      debug_frames   = 0;
+      debug_work_sum = 0;
+      debug_cycle_sum = 0;
+    }
   }
 
   //~ cleanup
@@ -932,5 +1152,6 @@ int main() {
   glfwTerminate();
   arena_release(frame_arena);
   arena_release(app_arena);
+  thread_ctx_release();
   return 0;
 }

@@ -100,9 +100,9 @@ DeriveLineEnding: true
 
 # Pointer/reference spacing
 DerivePointerAlignment: false
-PointerAlignment: Left
-ReferenceAlignment: Left
-QualifierAlignment: Left
+PointerAlignment: Right
+ReferenceAlignment: Right
+QualifierAlignment: Right
 
 DisableFormat: false
 

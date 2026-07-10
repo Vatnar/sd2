@@ -1,9 +1,9 @@
 #include <cstdio>
 #include <cstring>
 #include <thread>
+#include <time.h>
 #include <unistd.h>
 #include <x86intrin.h>
-#include <time.h>
 
 // glfw and vulkan
 
@@ -537,10 +537,10 @@ int main() {
   glfwSetCharCallback(glfw_window, Window::dispatch_char);
 
   // TODO: decouple target from monitor refresh
-  GLFWmonitor *primary_monitor = glfwGetPrimaryMonitor();
-  const GLFWvidmode *video_mode = glfwGetVideoMode(primary_monitor);
-  U32 monitor_hz = video_mode->refreshRate > 0 ? video_mode->refreshRate : 60;
-  F64 target_frame_ms = 1000.0 / monitor_hz;
+  GLFWmonitor       *primary_monitor = glfwGetPrimaryMonitor();
+  GLFWvidmode const *video_mode      = glfwGetVideoMode(primary_monitor);
+  U32                monitor_hz      = video_mode->refreshRate > 0 ? video_mode->refreshRate : 60;
+  F64                target_frame_ms = 1000.0 / monitor_hz;
   printf("Monitor: %u Hz (target: %.3f ms/frame)\n", monitor_hz, target_frame_ms);
 
   //~ vulkan init
@@ -826,10 +826,13 @@ int main() {
   //~ window loop
   U64 absolute_frame_index = 0;
   (void)absolute_frame_index;
-  U32 current_frame        = 0;
+  U32                 current_frame = 0;
+  bool                toggle_blue   = false;
+  bool                toggle_orange = false;
+  vk::ClearColorValue clear_color{};
   while (!glfwWindowShouldClose(glfw_window)) {
     struct timespec t0, t_wait, t1, t2;
-    U64 c0;
+    U64             c0;
     clock_gettime(CLOCK_MONOTONIC, &t0);
     c0 = __rdtsc();
     frame_arena->clear();
@@ -848,6 +851,17 @@ int main() {
         case KEY: {
           WKeyEvent &key = event.key;
           printf("%d, %d, %d, %d\n", key.key, key.action, key.mods, key.scancode);
+          if (key.action == GLFW_PRESS) {
+            if (key.key == GLFW_KEY_R) {
+              clear_color = {{std::array{0.15f, 0.05f, 0.05f, 1.0f}}};
+            }
+            if (key.key == GLFW_KEY_G) {
+              clear_color = {{std::array{0.05f, 0.15f, 0.05f, 1.0f}}};
+            }
+            if (key.key == GLFW_KEY_B) {
+              clear_color = {{std::array{0.05f, 0.05f, 0.15f, 1.0f}}};
+            }
+          }
           break;
         }
         case SCROLL: {
@@ -967,9 +981,6 @@ int main() {
     cmd.pipelineBarrier2(dep_info_render);
 
 
-    vk::ClearValue clear_color{
-        std::array{0.05f, 0.05f, 0.15f, 1.0f}
-    }; // Dark blue background
     vk::RenderingAttachmentInfo color_attachment{.imageView   = swapchain_image_views[image_index],
                                                  .imageLayout = vk::ImageLayout::eAttachmentOptimal,
                                                  .loadOp      = vk::AttachmentLoadOp::eClear,
@@ -1057,24 +1068,20 @@ int main() {
     clock_gettime(CLOCK_MONOTONIC, &t2);
     U64 c2 = __rdtsc();
 
-    // ~ FPS limit (temporary: tied to monitor refresh)
+    //~ FPS limit (temporary: tied to monitor refresh)
     {
-      F64 elapsed = (t2.tv_sec - t0.tv_sec) * 1000.0
-                  + (t2.tv_nsec - t0.tv_nsec) / 1e6;
+      F64 elapsed   = (t2.tv_sec - t0.tv_sec) * 1000.0 + (t2.tv_nsec - t0.tv_nsec) / 1e6;
       F64 remaining = target_frame_ms - elapsed;
       if (remaining > 2.0) {
-        struct timespec ts = {
-            .tv_sec  = 0,
-            .tv_nsec = (long)((remaining - 1.5) * 1e6)
-        };
+        struct timespec ts = {.tv_sec = 0, .tv_nsec = static_cast<long>((remaining - 1.5) * 1e6)};
         clock_nanosleep(CLOCK_MONOTONIC, 0, &ts, nullptr);
       }
       if (remaining > 0) {
         struct timespec now;
         do {
           clock_gettime(CLOCK_MONOTONIC, &now);
-        } while ((now.tv_sec - t0.tv_sec) * 1000.0
-               + (now.tv_nsec - t0.tv_nsec) / 1e6 < target_frame_ms);
+        } while ((now.tv_sec - t0.tv_sec) * 1000.0 + (now.tv_nsec - t0.tv_nsec) / 1e6 <
+                 target_frame_ms);
       }
     }
     struct timespec t_frame_end;
@@ -1085,19 +1092,17 @@ int main() {
     current_frame = (current_frame + 1) % MAX_FRAMES_IN_FLIGHT;
 
     // --- TIMING ---
-    F64 total_ms   = (t_frame_end.tv_sec - t0.tv_sec) * 1000.0
-                   + (t_frame_end.tv_nsec - t0.tv_nsec) / 1e6;
-    F64 work_ms    = (t_wait.tv_sec - t0.tv_sec) * 1000.0
-                   + (t_wait.tv_nsec - t0.tv_nsec) / 1e6
-                   + (t2.tv_sec - t1.tv_sec) * 1000.0
-                   + (t2.tv_nsec - t1.tv_nsec) / 1e6;
-    F64 wait_ms    = total_ms - work_ms;
+    F64 total_ms =
+        (t_frame_end.tv_sec - t0.tv_sec) * 1000.0 + (t_frame_end.tv_nsec - t0.tv_nsec) / 1e6;
+    F64 work_ms = (t_wait.tv_sec - t0.tv_sec) * 1000.0 + (t_wait.tv_nsec - t0.tv_nsec) / 1e6 +
+                  (t2.tv_sec - t1.tv_sec) * 1000.0 + (t2.tv_nsec - t1.tv_nsec) / 1e6;
+    F64 wait_ms      = total_ms - work_ms;
     U64 total_cycles = c2 - c0;
 
-    local_persist F64  debug_accum_ms = 0;
-    local_persist U32  debug_frames   = 0;
-    local_persist F64  debug_work_sum = 0;
-    local_persist U64  debug_cycle_sum = 0;
+    local_persist F64 debug_accum_ms  = 0;
+    local_persist U32 debug_frames    = 0;
+    local_persist F64 debug_work_sum  = 0;
+    local_persist U64 debug_cycle_sum = 0;
 
     debug_accum_ms += total_ms;
     debug_frames++;
@@ -1106,15 +1111,16 @@ int main() {
 
     if (debug_accum_ms >= 1000.0) {
       F64 fps = debug_frames / (debug_accum_ms / 1000.0);
-      printf("Frames: %-4u | work avg: %6.3f ms | total avg: %6.3f ms | cycles avg: %-8llu | FPS: %6.1f\n",
+      printf("Frames: %-4u | work avg: %6.3f ms | total avg: %6.3f ms | cycles avg: %-8llu | FPS: "
+             "%6.1f\n",
              debug_frames,
              debug_work_sum / debug_frames,
              debug_accum_ms / debug_frames,
-             (unsigned long long)(debug_cycle_sum / debug_frames),
+             static_cast<unsigned long long>(debug_cycle_sum / debug_frames),
              fps);
-      debug_accum_ms = 0;
-      debug_frames   = 0;
-      debug_work_sum = 0;
+      debug_accum_ms  = 0;
+      debug_frames    = 0;
+      debug_work_sum  = 0;
       debug_cycle_sum = 0;
     }
   }

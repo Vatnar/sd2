@@ -144,7 +144,8 @@ readability-static-definition-in-anonymous-namespace,
 readability-string-compare,
 readability-uniqueptr-delete-release,
 readability-use-anyofallof,
-readability-identifier-naming'
+readability-identifier-naming,
+-readability-static-accessed-through-instance,'
 
 CheckOptions:
   # Macros — skip all checks (multiple cases allowed)

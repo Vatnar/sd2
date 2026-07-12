@@ -2,14 +2,13 @@
 
 #include <bit>
 #include <cinttypes>
-#include <stdio.h>
-#include <string.h>
+#include <cstdio>
+#include <cstring>
 #include <unistd.h>
 
 #include <sys/mman.h>
 
 #include "internal/base.hpp"
-#include "internal/base_types.hpp"
 
 
 #define SLLStackPush_N(f, n, next) ((n)->next = (f), (f) = (n))
@@ -21,8 +20,8 @@
 #define MemoryZero(s, z)           memset((s), 0, (z))
 
 #if defined(__SANITIZE_ADDRESS__)
-extern "C" void __asan_poison_memory_region(const volatile void* addr, size_t size);
-extern "C" void __asan_unpoison_memory_region(const volatile void* addr, size_t size);
+extern "C" void __asan_poison_memory_region(void const volatile *addr, size_t size);
+extern "C" void __asan_unpoison_memory_region(void const volatile *addr, size_t size);
 #define AsanPoisonMemoryRegion(addr, size)   __asan_poison_memory_region((addr), (size))
 #define AsanUnpoisonMemoryRegion(addr, size) __asan_unpoison_memory_region((addr), (size))
 #else
@@ -31,35 +30,35 @@ extern "C" void __asan_unpoison_memory_region(const volatile void* addr, size_t 
 #endif
 
 
-void* reserve_memory(U64 size) {
-  void* result = mmap(nullptr, size, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+void *reserve_memory(U64 size) {
+  void *result = mmap(nullptr, size, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
   if (result == MAP_FAILED) {
     result = nullptr;
   }
   return result;
 }
-void* reserve_memory_large(U64 size) {
-  void* result = mmap(nullptr, size, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_HUGETLB, -1, 0);
+void *reserve_memory_large(U64 size) {
+  void *result = mmap(nullptr, size, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_HUGETLB, -1, 0);
   if (result == MAP_FAILED) {
     result = nullptr;
   }
   return result;
 }
 
-bool commit_memory(void* ptr, U64 size) {
+bool commit_memory(void *ptr, U64 size) {
   return mprotect(ptr, size, PROT_READ | PROT_WRITE) == 0;
 }
 
-bool commit_memory_large(void* ptr, U64 size) {
+bool commit_memory_large(void *ptr, U64 size) {
   return mprotect(ptr, size, PROT_READ | PROT_WRITE) == 0;
 }
 
-bool release_memory(void* ptr, U64 size) {
+bool release_memory(void *ptr, U64 size) {
   return munmap(ptr, size) == 0;
 }
 
 U64 get_large_page_size() {
-  FILE* fp = fopen("/proc/meminfo", "r");
+  FILE *fp = fopen("/proc/meminfo", "r");
   if (!fp) {
     TRAP();
   }
@@ -92,14 +91,14 @@ U64 get_page_size() {
 }
 
 
-Arena* arena_alloc(const ArenaParams params) {
+Arena *arena_alloc(ArenaParams const params) {
   U64 reserve_size = params.reserve_size;
   U64 commit_size  = params.commit_size;
 
   local_persist U64 large_page_size = get_large_page_size();
   local_persist U64 page_size       = get_page_size();
 
-  void* base = params.optional_backing_buffer;
+  void *base = params.optional_backing_buffer;
   if (base == nullptr) {
     if (any(params.flags & ArenaFlags::LARGE_PAGES)) {
       reserve_size = align_pow2(reserve_size, large_page_size);
@@ -137,7 +136,7 @@ Arena* arena_alloc(const ArenaParams params) {
   }
 
   AsanUnpoisonMemoryRegion(base, sizeof(Arena));
-  Arena* arena         = static_cast<Arena*>(base);
+  Arena *arena         = static_cast<Arena *>(base);
   arena->current       = arena;
   arena->flags         = params.flags;
   arena->commit_size   = commit_size;
@@ -154,7 +153,7 @@ Arena* arena_alloc(const ArenaParams params) {
   return arena;
 }
 
-Arena* arena_release(Arena* arena) {
+Arena *arena_release(Arena *arena) {
   if (!arena)
     return nullptr;
   for (Arena *n{arena->current}, *prev = nullptr; n != nullptr; n = prev) {
@@ -167,11 +166,11 @@ Arena* arena_release(Arena* arena) {
   return nullptr;
 }
 
-void* Arena::push(U64 size, U64 align, bool zero) {
+void *Arena::push(U64 size, U64 align, bool zero) {
   // zero-size is allowed: returns current aligned position without advancing
   ASSERT_ALWAYS(align != 0);
   ASSERT_ALWAYS(std::has_single_bit(align));
-  Arena* current  = this->current;
+  Arena *current  = this->current;
   U64    pos_pre  = 0;
   U64    pos_post = 0;
   ASSERT_ALWAYS(checked_align_pow2_u64(current->position, align, &pos_pre));
@@ -184,7 +183,7 @@ void* Arena::push(U64 size, U64 align, bool zero) {
   }
 
   if (current->reserved < pos_post && !any(this->flags & ArenaFlags::NO_CHAIN)) {
-    Arena* new_block = nullptr;
+    Arena *new_block = nullptr;
     // TODO: free-list optional thing
 
     if (new_block == nullptr) {
@@ -236,7 +235,7 @@ void* Arena::push(U64 size, U64 align, bool zero) {
     U64 commit_size = commit_post - current->committed;
 
     if (commit_size > 0) {
-      U8* commit_ptr = reinterpret_cast<U8*>(current) + current->committed;
+      U8 *commit_ptr = reinterpret_cast<U8 *>(current) + current->committed;
       if (any(current->flags & ArenaFlags::LARGE_PAGES)) {
         ASSERT_ALWAYS(commit_memory_large(commit_ptr, commit_size));
       } else {
@@ -247,9 +246,9 @@ void* Arena::push(U64 size, U64 align, bool zero) {
     current->committed = commit_post;
   }
 
-  void* result = nullptr;
+  void *result = nullptr;
   if (current->committed >= pos_post) {
-    result            = reinterpret_cast<U8*>(current) + pos_pre;
+    result            = reinterpret_cast<U8 *>(current) + pos_pre;
     current->position = pos_post;
     AsanUnpoisonMemoryRegion(result, size);
     MemoryZero(result, size_to_zero);
@@ -267,12 +266,12 @@ U64 Arena::pos() {
 }
 void Arena::pop_to(U64 pos) {
   U64    target  = max<U64>(sizeof(Arena), pos);
-  Arena* current = this->current;
+  Arena *current = this->current;
 
 #if ARENA_FREE_LIST
 #else
   while (current->prev != nullptr && target < current->base_position) {
-    Arena* prev = current->prev;
+    Arena *prev = current->prev;
     AsanUnpoisonMemoryRegion(current,
                              current->owns_memory ? current->committed : current->reserved);
     if (current->owns_memory) {
@@ -286,7 +285,7 @@ void Arena::pop_to(U64 pos) {
   U64 new_pos = target - current->base_position;
   ASSERT_ALWAYS(new_pos >= sizeof(Arena));
   ASSERT_ALWAYS(new_pos <= current->position);
-  AsanPoisonMemoryRegion(reinterpret_cast<U8*>(current) + new_pos, (current->position - new_pos));
+  AsanPoisonMemoryRegion(reinterpret_cast<U8 *>(current) + new_pos, (current->position - new_pos));
   current->position = new_pos;
 }
 

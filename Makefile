@@ -1,10 +1,11 @@
 CXX := g++
 CXXFLAGS := -Wall -Wextra -std=c++26 -fno-exceptions -freflection -Wpedantic -mclflushopt \
-            -g -O0 -Wno-unused-parameter -Wno-unused-variable
+            -g -O0 -Wno-unused-parameter -Wno-unused-variable -MMD -MP
 
 BUILD_DIR := build
 SHADER_DIR := $(BUILD_DIR)/shaders
 TARGET := $(BUILD_DIR)/sd2
+DEPS := $(BUILD_DIR)/main.d
 
 SLANGC ?= slangc
 SLANG_SOURCES := shaders/shader.slang
@@ -31,5 +32,7 @@ run: $(TARGET)
 
 clean:
 	rm -rf $(BUILD_DIR)
+
+-include $(DEPS)
 
 .PHONY: all run clean

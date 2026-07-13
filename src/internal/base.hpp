@@ -79,7 +79,28 @@ struct Array {
   static constexpr U64 size() { return SIZE; }
   static constexpr U64 array_size() { return sizeof(T) * SIZE; }
   using value_type = T;
+
+  operator T *() { return data; }
+  operator T const *() const { return data; }
+
+  T &operator[](U64 idx) {
+    if (idx >= SIZE) {
+      INVALID_PATH;
+    }
+    return data[idx];
+  }
 };
+
+template<typename T, typename... U>
+Array(T, U...) -> Array<T, 1 + sizeof...(U)>;
+template<typename T, U64 SIZE>
+void fill_array(Array<T, SIZE> &array, T value) {
+  for (U64 i = 0; i < SIZE; i++) {
+    array.data[i] = value;
+  }
+}
+
+//~ DynArray, that uses an arena
 
 //~ String8
 struct String8 {

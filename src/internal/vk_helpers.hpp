@@ -181,8 +181,7 @@ internal void recreate_swapchain(GLFWwindow              *glfw_window,
                                  vk::Extent2D            &swapchain_extent,
                                  vk::Format               swapchain_image_format,
                                  vk::ColorSpaceKHR        swapchain_color_space,
-                                 vk::PresentModeKHR       present_mode,
-                                 vk::SemaphoreCreateInfo &semaphore_info) {
+                                 vk::PresentModeKHR       present_mode) {
   S32 width = 0, height = 0;
   glfwGetFramebufferSize(glfw_window, &width, &height);
   while (width == 0 || height == 0) {
@@ -268,7 +267,7 @@ internal void recreate_swapchain(GLFWwindow              *glfw_window,
                              .layerCount     = 1}
     };
     sc->image_views[i]          = abort_if_vk_error(vk_device.createImageView(view_info));
-    sc->render_finished_sems[i] = abort_if_vk_error(vk_device.createSemaphore(semaphore_info));
+    sc->render_finished_sems[i] = abort_if_vk_error(vk_device.createSemaphore({}));
     sc->images_in_flight[i]     = vk::Fence{};
     sc->image_initialized[i]    = false;
   }

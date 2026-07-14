@@ -7,6 +7,7 @@ internal String8 read_file(Arena *arena, String8 filename) {
   if (!file.is_open()) {
     ASSERT_ALWAYS((false && "Failed to open file"));
   }
+
   std::streampos const BUFFER_SIZE = file.tellg();
   U8                  *buffer      = arena->push_array<U8>(file.tellg());
   file.seekg(0, std::ios::beg);

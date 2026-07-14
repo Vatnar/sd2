@@ -1,6 +1,7 @@
 CXX := g++
+INCLUDES := -I/.include -I./vendor
 CXXFLAGS := -Wall -Wextra -std=c++26 -fno-exceptions -freflection -Wpedantic -mclflushopt \
-            -g -O0 -Wno-unused-parameter -Wno-unused-variable -MMD -MP
+            -g -O0 -Wno-unused-parameter -Wno-unused-variable -MMD -MP $(INCLUDES)
 
 BUILD_DIR := build
 SHADER_DIR := $(BUILD_DIR)/shaders
@@ -28,7 +29,7 @@ $(SHADER_DIR):
 	mkdir -p $@
 
 run: $(TARGET)
-	./$(TARGET)
+	cd $(BUILD_DIR) && ./$(notdir $(TARGET))
 
 clean:
 	rm -rf $(BUILD_DIR)

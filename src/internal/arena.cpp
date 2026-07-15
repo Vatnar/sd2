@@ -1,5 +1,3 @@
-#include "internal/arena.hpp"
-
 #include <bit>
 #include <cinttypes>
 #include <cstdio>
@@ -8,7 +6,7 @@
 
 #include <sys/mman.h>
 
-#include "internal/base.hpp"
+#include "../sd2_inc.hpp"
 
 
 #define SLLStackPush_N(f, n, next) ((n)->next = (f), (f) = (n))

@@ -37,6 +37,7 @@ using F64 = double;
 #define NOT_IMPLEMENTED ASSERT(!"Not Implemented!")
 #define NO_OP           ((void)0)
 
+
 #if defined(__GNUC__) || defined(__clang__)
 #define FORCE_INLINE [[gnu::always_inline]] inline
 #else
@@ -54,13 +55,85 @@ using F64 = double;
 #error "__buitin_FILE() not defined for your compiler"
 #endif
 
+template<typename T>
+FORCE_INLINE T constexpr align_pow2(T x, T b) {
+  return (x + b - 1) & ~(b - 1);
+}
+
+consteval U64 kb(U64 n) {
+  return n << 10;
+}
+consteval U64 mb(U64 n) {
+  return n << 20;
+}
+consteval U64 gb(U64 n) {
+  return n << 30;
+}
+consteval U64 tb(U64 n) {
+  return n << 40;
+}
+
+template<typename T>
+FORCE_INLINE T constexpr min(T a, T b) {
+  return a < b ? a : b;
+}
+
+template<typename T>
+FORCE_INLINE T constexpr max(T a, T b) {
+  return a > b ? a : b;
+}
+
+template<typename T>
+FORCE_INLINE T constexpr clamp_top(T a, T x) {
+  return min(a, x);
+}
+template<typename T>
+FORCE_INLINE T constexpr clamp_bot(T x, T b) {
+  return max(x, b);
+}
+
+template<typename T>
+FORCE_INLINE T constexpr clamp(T a, T x, T b) {
+  if (x < a) {
+    return a;
+  }
+  if (x > b) {
+    return b;
+  }
+  return x;
+}
+
+FORCE_INLINE bool checked_add_u64(U64 a, U64 b, U64 *out) {
+  if (a > UINT64_MAX - b)
+    return false;
+  *out = a + b;
+  return true;
+}
+
+FORCE_INLINE bool checked_mul_u64(U64 a, U64 b, U64 *out) {
+  if (a != 0 && b > UINT64_MAX / a)
+    return false;
+  *out = a * b;
+  return true;
+}
+
+FORCE_INLINE bool checked_align_pow2_u64(U64 x, U64 align, U64 *out) {
+  ASSERT_ALWAYS(align != 0);
+  ASSERT_ALWAYS(std::has_single_bit(align));
+  U64 add = align - 1;
+  if (x > UINT64_MAX - add)
+    return false;
+  *out = (x + add) & ~add;
+  return true;
+}
+
+
 //~ SourceLocation
 struct SourceLocation {
   char const *file;
   unsigned    line;
 
-  static consteval SourceLocation current(char const *file = __builtin_FILE(),
-                                          unsigned    line = __builtin_LINE()) {
+  static consteval SourceLocation current(char const *file = __builtin_FILE(), unsigned line = __builtin_LINE()) {
     return {file, line};
   }
 };

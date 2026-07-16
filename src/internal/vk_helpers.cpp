@@ -138,7 +138,10 @@ internal void recreate_swapchain(GLFWwindow         *glfw_window,
                                  vk::Extent2D       &swapchain_extent,
                                  vk::Format          swapchain_image_format,
                                  vk::ColorSpaceKHR   swapchain_color_space,
-                                 vk::PresentModeKHR  present_mode) {
+                                 vk::PresentModeKHR  present_mode,
+                                 vk::Image          *depth_image,
+                                 vk::ImageView      *depth_image_view,
+                                 GpuArena           &device_arena) {
   S32 width = 0, height = 0;
   glfwGetFramebufferSize(glfw_window, &width, &height);
   while (width == 0 || height == 0) {
@@ -167,6 +170,7 @@ internal void recreate_swapchain(GLFWwindow         *glfw_window,
     new_extent.height =
         std::clamp(static_cast<U32>(height), capabilities.minImageExtent.height, capabilities.maxImageExtent.height);
   }
+
 
   swapchain_extent = new_extent;
 
@@ -210,21 +214,21 @@ internal void recreate_swapchain(GLFWwindow         *glfw_window,
   abort_if_vk_error(vk_device.getSwapchainImagesKHR(vk_swapchain, &sc->image_count, sc->images));
 
   for (U64 i = 0; i < sc->image_count; ++i) {
-    vk::ImageViewCreateInfo view_info{
-        .image            = sc->images[i],
-        .viewType         = vk::ImageViewType::e2D,
-        .format           = swapchain_image_format,
-        .subresourceRange = {.aspectMask     = vk::ImageAspectFlagBits::eColor,
-                             .baseMipLevel   = 0,
-                             .levelCount     = 1,
-                             .baseArrayLayer = 0,
-                             .layerCount     = 1}
-    };
-    sc->image_views[i]          = abort_if_vk_error(vk_device.createImageView(view_info));
+    sc->image_views[i] =
+        create_image_view(vk_device, sc->images[i], swapchain_image_format, vk::ImageAspectFlagBits::eColor);
     sc->render_finished_sems[i] = abort_if_vk_error(vk_device.createSemaphore({}));
     sc->images_in_flight[i]     = vk::Fence{};
     sc->image_initialized[i]    = false;
   }
+
+  if (depth_image)
+    vk_device.destroyImage(*depth_image);
+  if (depth_image_view)
+    vk_device.destroyImageView(*depth_image_view);
+
+  DepthResources depth = create_depth_resources(vk_phys_dev, vk_device, device_arena, swapchain_extent);
+  *depth_image       = depth.image;
+  *depth_image_view  = depth.image_view;
 }
 
 internal bool check_validation_layer_support() {
@@ -264,36 +268,6 @@ internal U32 get_required_extensions(char const **out_extensions, U32 max_extens
   return count;
 }
 
-internal vk::ImageMemoryBarrier2 make_image_barrier(U32                     image_index,
-                                                    SwapchainResources     *sc,
-                                                    vk::ImageLayout         old_layout,
-                                                    vk::ImageLayout         new_layout,
-                                                    vk::AccessFlags2        src_access_mask,
-                                                    vk::AccessFlags2        dst_access_mask,
-                                                    vk::PipelineStageFlags2 src_stage_mask,
-                                                    vk::PipelineStageFlags2 dst_stage_mask) {
-  return {
-      .srcStageMask        = src_stage_mask,
-      .srcAccessMask       = src_access_mask,
-      .dstStageMask        = dst_stage_mask,
-      .dstAccessMask       = dst_access_mask,
-      .oldLayout           = old_layout,
-      .newLayout           = new_layout,
-      .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-      .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-      .image               = sc->images[image_index],
-      .subresourceRange    = {.aspectMask     = vk::ImageAspectFlagBits::eColor,
-                              .baseMipLevel   = 0,
-                              .levelCount     = 1,
-                              .baseArrayLayer = 0,
-                              .layerCount     = 1},
-  };
-}
-
-internal vk::DependencyInfo dep_info(vk::ImageMemoryBarrier2 *barrier) {
-  return {.dependencyFlags = {}, .imageMemoryBarrierCount = 1, .pImageMemoryBarriers = barrier};
-}
-
 internal U32 find_memory_type(vk::PhysicalDevice vk_phys_dev, U32 type_filter, vk::MemoryPropertyFlags properties) {
   vk::PhysicalDeviceMemoryProperties mem_properties = vk_phys_dev.getMemoryProperties();
   for (U32 i = 0; i < mem_properties.memoryTypeCount; i++) {
@@ -304,11 +278,11 @@ internal U32 find_memory_type(vk::PhysicalDevice vk_phys_dev, U32 type_filter, v
   NOT_IMPLEMENTED;
   return 0;
 }
-internal std::pair<vk::Buffer, vk::DeviceMemory> create_buffer(vk::PhysicalDevice      vk_phys_dev,
-                                                               vk::Device              vk_device,
-                                                               vk::DeviceSize          size,
-                                                               vk::BufferUsageFlags    usage,
-                                                               vk::MemoryPropertyFlags properties) {
+[[maybe_unused]] internal std::pair<vk::Buffer, vk::DeviceMemory> create_buffer(vk::PhysicalDevice      vk_phys_dev,
+                                                                                vk::Device              vk_device,
+                                                                                vk::DeviceSize          size,
+                                                                                vk::BufferUsageFlags    usage,
+                                                                                vk::MemoryPropertyFlags properties) {
   vk::BufferCreateInfo   buffer_info{.size = size, .usage = usage, .sharingMode = vk::SharingMode::eExclusive};
   vk::Buffer             buffer              = abort_if_vk_error(vk_device.createBuffer(buffer_info));
   vk::MemoryRequirements memory_requirements = vk_device.getBufferMemoryRequirements(buffer);
@@ -329,14 +303,14 @@ internal void copy_buffer(vk::Device      vk_device,
   command_copy_buffer.copyBuffer(src_buffer, dst_buffer, vk::BufferCopy(0, 0, size));
   end_single_time_command(vk_device, queue, command_pool, command_copy_buffer);
 }
-internal std::pair<vk::Image, vk::DeviceMemory> create_image(vk::PhysicalDevice      vk_phys_dev,
-                                                             vk::Device              vk_device,
-                                                             U32                     width,
-                                                             U32                     height,
-                                                             vk::Format              format,
-                                                             vk::ImageTiling         tiling,
-                                                             vk::ImageUsageFlags     usage,
-                                                             vk::MemoryPropertyFlags properties) {
+[[maybe_unused]] internal std::pair<vk::Image, vk::DeviceMemory> create_image(vk::PhysicalDevice      vk_phys_dev,
+                                                                              vk::Device              vk_device,
+                                                                              U32                     width,
+                                                                              U32                     height,
+                                                                              vk::Format              format,
+                                                                              vk::ImageTiling         tiling,
+                                                                              vk::ImageUsageFlags     usage,
+                                                                              vk::MemoryPropertyFlags properties) {
   vk::Image           image     = nullptr;
   vk::DeviceMemory    image_mem = nullptr;
   vk::ImageCreateInfo image_info{
@@ -361,6 +335,118 @@ internal std::pair<vk::Image, vk::DeviceMemory> create_image(vk::PhysicalDevice 
   return {image, image_mem};
 }
 
+
+static vk::DeviceSize gpu_arena_alloc(GpuArena &arena, vk::DeviceSize size, vk::DeviceSize alignment) {
+  vk::DeviceSize aligned_offset = (arena.offset + alignment - 1) & ~(alignment - 1);
+  ASSERT_ALWAYS(aligned_offset + size <= arena.capacity);
+  arena.offset = aligned_offset + size;
+  return aligned_offset;
+}
+
+internal GpuArena create_gpu_arena(vk::PhysicalDevice phys_dev,
+                                   vk::Device         device,
+                                   U32                memory_type_index,
+                                   vk::DeviceSize     capacity) {
+  vk::MemoryAllocateInfo alloc_info{.allocationSize = capacity, .memoryTypeIndex = memory_type_index};
+  vk::DeviceMemory       memory = abort_if_vk_error(device.allocateMemory(alloc_info));
+
+  vk::PhysicalDeviceMemoryProperties mem_props  = phys_dev.getMemoryProperties();
+  void                              *mapped_ptr = nullptr;
+  if (memory_type_index < mem_props.memoryTypeCount &&
+      (mem_props.memoryTypes[memory_type_index].propertyFlags & vk::MemoryPropertyFlagBits::eHostVisible)) {
+    mapped_ptr = abort_if_vk_error(device.mapMemory(memory, 0, capacity));
+  }
+  return {.memory            = memory,
+          .mapped_ptr        = mapped_ptr,
+          .offset            = 0,
+          .capacity          = capacity,
+          .memory_type_index = memory_type_index};
+}
+
+internal void destroy_gpu_arena(vk::Device device, GpuArena &arena) {
+  if (arena.mapped_ptr)
+    device.unmapMemory(arena.memory);
+  if (arena.memory)
+    device.freeMemory(arena.memory);
+  arena = {};
+}
+
+internal DepthResources create_depth_resources(vk::PhysicalDevice vk_phys_dev,
+                                                vk::Device         vk_device,
+                                                GpuArena          &device_arena,
+                                                vk::Extent2D       extent) {
+  Array format_candidates = {vk::Format::eD32Sfloat, vk::Format::eD32SfloatS8Uint, vk::Format::eD24UnormS8Uint};
+  vk::Format format      = find_supported_format(format_candidates,
+                                              format_candidates.size(),
+                                              vk::ImageTiling::eOptimal,
+                                              vk::FormatFeatureFlagBits::eDepthStencilAttachment,
+                                              vk_phys_dev);
+  auto [image, alloc] = create_image(vk_phys_dev,
+                                     vk_device,
+                                     extent.width,
+                                     extent.height,
+                                     format,
+                                     vk::ImageTiling::eOptimal,
+                                     vk::ImageUsageFlagBits::eDepthStencilAttachment,
+                                     device_arena);
+  (void)alloc;
+  vk::ImageView image_view = create_image_view(vk_device, image, format, vk::ImageAspectFlagBits::eDepth);
+  return {.image = image, .image_view = image_view, .format = format};
+}
+
+internal std::pair<vk::Buffer, GpuArenaAlloc> create_buffer(vk::PhysicalDevice   vk_phys_dev,
+                                                            vk::Device           vk_device,
+                                                            vk::DeviceSize       size,
+                                                            vk::BufferUsageFlags usage,
+                                                            GpuArena            &arena) {
+  (void)vk_phys_dev;
+
+  vk::BufferCreateInfo   buffer_info{.size = size, .usage = usage, .sharingMode = vk::SharingMode::eExclusive};
+  vk::Buffer             buffer   = abort_if_vk_error(vk_device.createBuffer(buffer_info));
+  vk::MemoryRequirements mem_reqs = vk_device.getBufferMemoryRequirements(buffer);
+  ASSERT_ALWAYS(mem_reqs.memoryTypeBits & (1u << arena.memory_type_index));
+  vk::DeviceSize offset = gpu_arena_alloc(arena, mem_reqs.size, mem_reqs.alignment);
+  abort_if_vk_error(vk_device.bindBufferMemory(buffer, arena.memory, offset));
+  void *mapped = arena.mapped_ptr ? static_cast<char *>(arena.mapped_ptr) + offset : nullptr;
+  return {
+      buffer,
+      {.memory = arena.memory, .offset = offset, .mapped = mapped}
+  };
+}
+
+internal std::pair<vk::Image, GpuArenaAlloc> create_image(vk::PhysicalDevice  vk_phys_dev,
+                                                          vk::Device          vk_device,
+                                                          U32                 width,
+                                                          U32                 height,
+                                                          vk::Format          format,
+                                                          vk::ImageTiling     tiling,
+                                                          vk::ImageUsageFlags usage,
+                                                          GpuArena           &arena) {
+  (void)vk_phys_dev;
+
+  vk::ImageCreateInfo image_info{
+      .imageType     = vk::ImageType::e2D,
+      .format        = format,
+      .extent        = {width, height, 1},
+      .mipLevels     = 1,
+      .arrayLayers   = 1,
+      .samples       = vk::SampleCountFlagBits::e1,
+      .tiling        = tiling,
+      .usage         = usage,
+      .sharingMode   = vk::SharingMode::eExclusive,
+      .initialLayout = vk::ImageLayout::eUndefined,
+  };
+  vk::Image              image    = abort_if_vk_error(vk_device.createImage(image_info));
+  vk::MemoryRequirements mem_reqs = vk_device.getImageMemoryRequirements(image);
+  ASSERT_ALWAYS(mem_reqs.memoryTypeBits & (1u << arena.memory_type_index));
+  vk::DeviceSize offset = gpu_arena_alloc(arena, mem_reqs.size, mem_reqs.alignment);
+  abort_if_vk_error(vk_device.bindImageMemory(image, arena.memory, offset));
+  void *mapped = arena.mapped_ptr ? static_cast<char *>(arena.mapped_ptr) + offset : nullptr;
+  return {
+      image,
+      {.memory = arena.memory, .offset = offset, .mapped = mapped}
+  };
+}
 
 internal vk::CommandBuffer
          begin_single_time_command(vk::Device vk_device, vk::CommandPool command_pool, char const *name) {
@@ -395,44 +481,30 @@ internal void end_single_time_command(vk::Device        vk_device,
   vk_device.freeCommandBuffers(command_pool, 1, &command_buffer);
 }
 
-internal void transition_image_layout(vk::CommandBuffer command_buffer,
-                                      vk::Image         image,
-                                      vk::ImageLayout   old_layout,
-                                      vk::ImageLayout   new_layout) {
-  vk::PipelineStageFlags source_stage      = {};
-  vk::PipelineStageFlags destination_stage = {};
-  vk::AccessFlags        src_access_mask   = {};
-  vk::AccessFlags        dst_access_mask   = {};
-  {
-    if (old_layout == vk::ImageLayout::eUndefined && new_layout == vk::ImageLayout::eTransferDstOptimal) {
-      dst_access_mask = vk::AccessFlagBits::eTransferWrite;
-
-      source_stage      = vk::PipelineStageFlagBits::eTopOfPipe;
-      destination_stage = vk::PipelineStageFlagBits::eTransfer;
-    } else if (old_layout == vk::ImageLayout::eTransferDstOptimal &&
-               new_layout == vk::ImageLayout::eShaderReadOnlyOptimal) {
-      src_access_mask = vk::AccessFlagBits::eTransferWrite;
-      dst_access_mask = vk::AccessFlagBits::eShaderRead;
-
-      source_stage      = vk::PipelineStageFlagBits::eTransfer;
-      destination_stage = vk::PipelineStageFlagBits::eFragmentShader;
-    } else {
-      INVALID_PATH;
-    }
-  }
-
-  vk::ImageMemoryBarrier barrier{
+internal void transition_image_layout(vk::CommandBuffer       command_buffer,
+                                      vk::Image               image,
+                                      vk::ImageLayout         old_layout,
+                                      vk::ImageLayout         new_layout,
+                                      vk::AccessFlags2        src_access_mask,
+                                      vk::AccessFlags2        dst_access_mask,
+                                      vk::PipelineStageFlags2 src_stage_mask,
+                                      vk::PipelineStageFlags2 dst_stage_mask,
+                                      vk::ImageAspectFlags    aspect_flags) {
+  vk::ImageMemoryBarrier2 barrier{
+      .srcStageMask        = src_stage_mask,
       .srcAccessMask       = src_access_mask,
+      .dstStageMask        = dst_stage_mask,
       .dstAccessMask       = dst_access_mask,
       .oldLayout           = old_layout,
       .newLayout           = new_layout,
-      .srcQueueFamilyIndex = vk::QueueFamilyIgnored,
-      .dstQueueFamilyIndex = vk::QueueFamilyIgnored,
+      .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+      .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
       .image               = image,
-      .subresourceRange    = {.aspectMask = vk::ImageAspectFlagBits::eColor, .levelCount = 1, .layerCount = 1}
+      .subresourceRange =
+          {.aspectMask = aspect_flags, .baseMipLevel = 0, .levelCount = 1, .baseArrayLayer = 0, .layerCount = 1},
   };
-
-  command_buffer.pipelineBarrier(source_stage, destination_stage, {}, {}, nullptr, barrier);
+  vk::DependencyInfo dep_info{.imageMemoryBarrierCount = 1, .pImageMemoryBarriers = &barrier};
+  command_buffer.pipelineBarrier2(dep_info);
 }
 
 internal void
@@ -449,4 +521,54 @@ copy_buffer_to_image(vk::CommandBuffer command_buffer, vk::Buffer buffer, vk::Im
       .imageExtent       = {.width = width, .height = height, .depth = 1}
   };
   command_buffer.copyBufferToImage(buffer, image, vk::ImageLayout::eTransferDstOptimal, region);
+}
+
+internal vk::ImageView
+         create_image_view(vk::Device device, vk::Image image, vk::Format format, vk::ImageAspectFlags aspect_mask) {
+  vk::ImageViewCreateInfo view_info{
+               .image    = image,
+               .viewType = vk::ImageViewType::e2D,
+               .format   = format,
+               .subresourceRange =
+                   {.aspectMask = aspect_mask, .baseMipLevel = 0, .levelCount = 1, .baseArrayLayer = 0, .layerCount = 1}
+  };
+  return abort_if_vk_error(device.createImageView(view_info));
+}
+using PhysicalDeviceFeatures = vk::StructureChain<vk::PhysicalDeviceFeatures2,
+                                                  vk::PhysicalDeviceVulkan11Features,
+                                                  vk::PhysicalDeviceVulkan13Features,
+                                                  vk::PhysicalDeviceVulkan14Features,
+                                                  vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT>;
+internal PhysicalDeviceFeatures enable_phys_dev_features(vk::PhysicalDevice vk_phys_dev) {
+  PhysicalDeviceFeatures s_features{};
+  vk_phys_dev.getFeatures2(&s_features.get<vk::PhysicalDeviceFeatures2>());
+
+  ASSERT_ALWAYS(s_features.get<vk::PhysicalDeviceVulkan13Features>().synchronization2);
+  ASSERT_ALWAYS(s_features.get<vk::PhysicalDeviceVulkan13Features>().dynamicRendering);
+  ASSERT_ALWAYS(s_features.get<vk::PhysicalDeviceVulkan11Features>().shaderDrawParameters);
+  ASSERT_ALWAYS(s_features.get<vk::PhysicalDeviceFeatures2>().features.samplerAnisotropy);
+  ASSERT_ALWAYS(s_features.get<vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT>().extendedDynamicState);
+
+  PhysicalDeviceFeatures e_features{};
+  e_features.get<vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT>().extendedDynamicState = vk::True;
+  e_features.get<vk::PhysicalDeviceVulkan13Features>().synchronization2                    = vk::True;
+  e_features.get<vk::PhysicalDeviceVulkan13Features>().dynamicRendering                    = vk::True;
+  e_features.get<vk::PhysicalDeviceVulkan11Features>().shaderDrawParameters                = vk::True;
+  e_features.get<vk::PhysicalDeviceFeatures2>().features.samplerAnisotropy                 = vk::True;
+
+  return e_features;
+}
+vk::Format find_supported_format(vk::Format            *candidates,
+                                 U32                    candidate_count,
+                                 vk::ImageTiling        tiling,
+                                 vk::FormatFeatureFlags features,
+                                 vk::PhysicalDevice     phys_dev) {
+  for (U32 i = 0; i < candidate_count; i++) {
+    vk::FormatProperties props = phys_dev.getFormatProperties(candidates[i]);
+    if (((tiling == vk::ImageTiling::eLinear) && ((props.linearTilingFeatures & features) == features)) ||
+        ((tiling == vk::ImageTiling::eOptimal) && ((props.optimalTilingFeatures & features) == features))) {
+      return candidates[i];
+    }
+  }
+  INVALID_PATH;
 }

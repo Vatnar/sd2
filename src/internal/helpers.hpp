@@ -1,4 +1,5 @@
 #pragma once
+#include <ctime>
 #include "arena.hpp"
 
 internal String8 read_file(Arena *arena, String8 filename) {
@@ -34,9 +35,8 @@ struct FrameClock {
     do {
       clock_gettime(CLOCK_MONOTONIC, &frame_end);
       F64 remaining = target_ms - diff_ms(frame_start, frame_end);
-      if (remaining > 2.0) {
-        F64 sleep_ms = remaining - 1.5;
-        std::this_thread::sleep_for(std::chrono::duration<F64, std::milli>(sleep_ms));
+      if (remaining > 0.3) {
+        std::this_thread::sleep_for(std::chrono::duration<F64, std::milli>(remaining - 0.2));
       }
     } while (diff_ms(frame_start, frame_end) < target_ms);
   }

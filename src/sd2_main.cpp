@@ -12,7 +12,6 @@ VULKAN_HPP_DEFAULT_DISPATCH_LOADER_DYNAMIC_STORAGE
 static vk::detail::DynamicLoader g_vulkan_dynamic_loader{};
 
 //~ cpp
-
 #include "internal/arena.cpp"
 #include "internal/vk_helpers.cpp"
 
@@ -28,24 +27,29 @@ void glfw_error_callback(int ec, char const *desc) {
 }
 
 struct Vertex {
-  glm::vec2 pos;
+  glm::vec3 pos;
   glm::vec3 color;
+  glm::vec2 tex_coord;
 
   static constexpr vk::VertexInputBindingDescription get_binding_description() {
     return {.binding = 0, .stride = sizeof(Vertex), .inputRate = vk::VertexInputRate::eVertex};
   }
 
-  static constexpr Array<vk::VertexInputAttributeDescription, 2> get_attribute_descriptions() {
+  static constexpr Array<vk::VertexInputAttributeDescription, 3> get_attribute_descriptions() {
     return {
         {
          vk::VertexInputAttributeDescription{.location = 0,
                                                 .binding  = 0,
-                                                .format   = vk::Format::eR32G32Sfloat,
+                                                .format   = vk::Format::eR32G32B32Sfloat,
                                                 .offset   = offsetof(Vertex, pos)},
          vk::VertexInputAttributeDescription{.location = 1,
                                                 .binding  = 0,
                                                 .format   = vk::Format::eR32G32B32Sfloat,
                                                 .offset   = offsetof(Vertex, color)},
+         vk::VertexInputAttributeDescription{.location = 2,
+                                                .binding  = 0,
+                                                .format   = vk::Format::eR32G32Sfloat,
+                                                .offset   = offsetof(Vertex, tex_coord)},
          }
     };
   }
@@ -58,6 +62,23 @@ struct UniformBufferObject {
   alignas(16) glm::mat4 proj;
 };
 
+// TODO: remove VERTICES and INDICES, and load model
+constexpr Array VERTICES{
+    Vertex{ {-0.5f, -0.5f, 0.0f}, {1.0f, 0.0f, 0.0f}, {1.0f, 0.0f}},
+    Vertex{  {0.5f, -0.5f, 0.0f}, {0.0f, 1.0f, 0.0f}, {0.0f, 0.0f}},
+    Vertex{   {0.5f, 0.5f, 0.0f}, {0.0f, 0.0f, 1.0f}, {0.0f, 1.0f}},
+    Vertex{  {-0.5f, 0.5f, 0.0f}, {1.0f, 1.0f, 1.0f}, {1.0f, 1.0f}},
+    Vertex{{-0.5f, -0.5f, -0.5f}, {1.0f, 0.0f, 0.0f}, {1.0f, 0.0f}},
+    Vertex{ {0.5f, -0.5f, -0.5f}, {0.0f, 1.0f, 0.0f}, {0.0f, 0.0f}},
+    Vertex{  {0.5f, 0.5f, -0.5f}, {0.0f, 0.0f, 1.0f}, {0.0f, 1.0f}},
+    Vertex{ {-0.5f, 0.5f, -0.5f}, {1.0f, 1.0f, 1.0f}, {1.0f, 1.0f}}
+};
+constexpr Array<U16, 12> INDICES = {0, 1, 2, 2, 3, 0, 4, 5, 6, 6, 7, 4};
+
+constexpr uint32_t    WIDTH        = 800;
+constexpr uint32_t    HEIGHT       = 600;
+constexpr char const *MODEL_PATH   = "assets/models/viking_room.obj";
+constexpr char const *TEXTURE_PATH = "assets/textures/viking_room.png";
 
 int main() {
   thread_ctx_init();
@@ -66,13 +87,15 @@ int main() {
   Arena    *init_arena  = arena_alloc({.name = "init"});
   AppParams params{
       .name   = str8_lit("sd2"),
-      .width  = 800,
-      .height = 600,
+      .width  = WIDTH,
+      .height = HEIGHT,
   };
 
-  //~ Scope 1: Window + GLFW
+  // TODO: extract to init_window(params) -> Window
+  //~ Window + GLFW
   Window window{};
-  F64    target_frame_ms{};
+  F64    target_frame_ms  = 1000.0 / 60;
+  bool   monitor_detected = false;
   {
     glfwSetErrorCallback(&glfw_error_callback);
     if (glfwInit() == false) {
@@ -92,15 +115,11 @@ int main() {
     glfwSetWindowCloseCallback(glfw_window, Window::dispatch_close);
     glfwSetWindowRefreshCallback(glfw_window, Window::dispatch_refresh);
     glfwSetCharCallback(glfw_window, Window::dispatch_char);
-
-    GLFWmonitor       *primary_monitor = glfwGetPrimaryMonitor();
-    GLFWvidmode const *video_mode      = glfwGetVideoMode(primary_monitor);
-    U32                monitor_hz      = video_mode->refreshRate > 0 ? video_mode->refreshRate : 60;
-    target_frame_ms                    = 1000.0 / monitor_hz;
-    printf("Monitor: %u Hz (target: %.3f ms/frame)\n", monitor_hz, target_frame_ms);
   }
 
-  //~ Scope 2: Vulkan Instance + Debug Messenger + Surface
+  // TODO: extract to create_vulkan_instance(glfw_window, init_arena) -> {instance, surface, debug_messenger,
+  // get_proc_addr}
+  //~ Vulkan Instance + Debug Messenger + Surface
   vk::Instance              vk_instance{};
   vk::SurfaceKHR            vk_surface{};
   PFN_vkGetInstanceProcAddr vk_get_instance_proc_addr{};
@@ -175,7 +194,8 @@ int main() {
     vk_surface = raw_surface;
   }
 
-  //~ Scope 3: Physical Device + Queue Families
+  // TODO: extract to pick_physical_device(instance, surface) -> {phys_dev, queue_indices}
+  //~ Physical Device + Queue Families
   vk::PhysicalDevice vk_phys_dev{};
   QueueFamilyIndices queue_indices{};
   {
@@ -187,7 +207,8 @@ int main() {
     queue_indices = find_queue_families(vk_phys_dev, vk_surface);
   }
 
-  //~ Scope 4: Logical Device + Queues
+  // TODO: extract to create_logical_device(phys_dev, queue_indices) -> {device, gfx_queue, present_queue}
+  //~ Logical Device + Queues
   vk::Device vk_device{};
   vk::Queue  graphics_queue{};
   vk::Queue  present_queue{};
@@ -212,27 +233,33 @@ int main() {
 
     Array device_extensions = {VK_KHR_SWAPCHAIN_EXTENSION_NAME};
 
-    vk::PhysicalDeviceFeatures         device_features{};
-    vk::PhysicalDeviceVulkan11Features device_features11{.shaderDrawParameters = true};
-    vk::PhysicalDeviceVulkan13Features device_features13{.pNext            = &device_features11,
-                                                         .synchronization2 = true,
-                                                         .dynamicRendering = true};
+    //~ Get supported physical device features
+    PhysicalDeviceFeatures features = enable_phys_dev_features(vk_phys_dev);
 
-    vk::DeviceCreateInfo dev_info{.pNext                   = &device_features13,
+    vk::DeviceCreateInfo dev_info{.pNext                   = &features.get<vk::PhysicalDeviceFeatures2>(),
                                   .queueCreateInfoCount    = queue_info_count,
                                   .pQueueCreateInfos       = queue_infos,
                                   .enabledExtensionCount   = 1,
-                                  .ppEnabledExtensionNames = device_extensions,
-                                  .pEnabledFeatures        = &device_features};
-
+                                  .ppEnabledExtensionNames = device_extensions};
     vk_device = abort_if_vk_error(vk_phys_dev.createDevice(dev_info));
     VULKAN_HPP_DEFAULT_DISPATCHER.init(vk_device);
-
     vk_device.getQueue(queue_indices.graphics_index, 0, &graphics_queue);
     vk_device.getQueue(queue_indices.present_index, 0, &present_queue);
   }
 
-  //~ Scope 5: Swapchain Format + Present Mode Selection
+  // TODO: extract to create_gpu_arenas(phys_dev, device) -> {host_arena, device_arena}
+  //~ GPU memory arenas (sub-allocators to avoid per-resource allocations)
+  U32 host_mem_type =
+      find_memory_type(vk_phys_dev,
+                       UINT32_MAX,
+                       vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent);
+  U32 device_mem_type = find_memory_type(vk_phys_dev, UINT32_MAX, vk::MemoryPropertyFlagBits::eDeviceLocal);
+
+  GpuArena host_arena   = create_gpu_arena(vk_phys_dev, vk_device, host_mem_type);
+  GpuArena device_arena = create_gpu_arena(vk_phys_dev, vk_device, device_mem_type, mb(4));
+
+  // TODO: extract to choose_swapchain_format(phys_dev, surface, params) -> {format, color_space, present_mode, extent}
+  //~ Swapchain Format + Present Mode Selection
   vk::Format         chosen_format{};
   vk::ColorSpaceKHR  chosen_color_space{};
   vk::PresentModeKHR chosen_present_mode{};
@@ -285,7 +312,9 @@ int main() {
     }
   }
 
-  //~ Scope 6: Swapchain Creation
+  // TODO: extract to create_swapchain(device, surface, format, color_space, extent, present_mode, queue_indices) ->
+  // swapchain
+  //~ Swapchain Creation
   vk::SwapchainKHR vk_swapchain{};
   {
     vk::SurfaceCapabilitiesKHR capabilities{};
@@ -326,7 +355,9 @@ int main() {
     vk_swapchain = abort_if_vk_error(vk_device.createSwapchainKHR(swapchain_info));
   }
 
-  //~ Scope 7: Swapchain Image Views + Sync Primitives + Command Pool
+  // TODO: extract to create_swapchain_resources(device, swapchain, format, queue_family_index) -> {pool, fences, sems,
+  // cmd_bufs}
+  //~ Swapchain Image Views + Sync Primitives + Command Pool
   Array<SwapchainResources, SC_MAX_GENERATIONS>  swapchain_pool{};
   U32                                            pool_gen{};
   SwapchainResources                            *sc{};
@@ -383,37 +414,34 @@ int main() {
     init_arena = arena_release(init_arena);
   }
 
+
+  // TODO: extract to load_texture(device, phys_dev, host_arena, device_arena, pool, queue, path, format) -> {tex_image,
+  // tex_image_alloc}
   //~ Texture images
-  vk::Image        tex_image        = nullptr;
-  vk::DeviceMemory tex_image_memory = nullptr;
+  vk::Image     tex_image       = nullptr;
+  GpuArenaAlloc tex_image_alloc = {};
   {
     U32            tex_width, tex_height, tex_channels;
-    stbi_uc       *pixels     = stbi_load("assets/textures/texture.jpg",
+    stbi_uc       *pixels     = stbi_load(TEXTURE_PATH,
                                 reinterpret_cast<int *>(&tex_width),
                                 reinterpret_cast<int *>(&tex_height),
                                 reinterpret_cast<int *>(&tex_channels),
                                 STBI_rgb_alpha);
     vk::DeviceSize image_size = tex_width * tex_height * 4;
     ASSERT_ALWAYS(pixels);
-    auto [staging_buffer, staging_buffer_mem] =
-        create_buffer(vk_phys_dev,
-                      vk_device,
-                      image_size,
-                      vk::BufferUsageFlagBits::eTransferSrc,
-                      vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent);
-    void *data = abort_if_vk_error(vk_device.mapMemory(staging_buffer_mem, 0, image_size));
-    MemoryCopy(data, pixels, image_size);
-    vk_device.unmapMemory(staging_buffer_mem);
+    auto [staging_buffer, staging_alloc] =
+        create_buffer(vk_phys_dev, vk_device, image_size, vk::BufferUsageFlagBits::eTransferSrc, host_arena);
+    MemoryCopy(staging_alloc.mapped, pixels, image_size);
     stbi_image_free(pixels);
-    std::tie(tex_image, tex_image_memory) =
+    std::tie(tex_image, tex_image_alloc) =
         create_image(vk_phys_dev,
                      vk_device,
                      tex_width,
                      tex_height,
-                     chosen_format,
+                     vk::Format::eR8G8B8A8Srgb,
                      vk::ImageTiling::eOptimal,
                      vk::ImageUsageFlagBits::eTransferDst | vk::ImageUsageFlagBits::eSampled,
-                     vk::MemoryPropertyFlagBits::eDeviceLocal);
+                     device_arena);
     abort_if_vk_error(vk_device.setDebugUtilsObjectNameEXT({
         .objectType   = vk::ObjectType::eImage,
         .objectHandle = (uint64_t)(VkImage)tex_image,
@@ -424,35 +452,75 @@ int main() {
     transition_image_layout(command_buffer,
                             tex_image,
                             vk::ImageLayout::eUndefined,
-                            vk::ImageLayout::eTransferDstOptimal);
+                            vk::ImageLayout::eTransferDstOptimal,
+                            {},
+                            vk::AccessFlagBits2::eTransferWrite,
+                            vk::PipelineStageFlagBits2::eTopOfPipe,
+                            vk::PipelineStageFlagBits2::eTransfer,
+                            vk::ImageAspectFlagBits::eColor);
     copy_buffer_to_image(command_buffer, staging_buffer, tex_image, tex_width, tex_height);
     transition_image_layout(command_buffer,
                             tex_image,
                             vk::ImageLayout::eTransferDstOptimal,
-                            vk::ImageLayout::eShaderReadOnlyOptimal);
+                            vk::ImageLayout::eShaderReadOnlyOptimal,
+                            vk::AccessFlagBits2::eTransferWrite,
+                            vk::AccessFlagBits2::eShaderRead,
+                            vk::PipelineStageFlagBits2::eTransfer,
+                            vk::PipelineStageFlagBits2::eFragmentShader,
+                            vk::ImageAspectFlagBits::eColor);
     end_single_time_command(vk_device, graphics_queue, command_pool, command_buffer);
     vk_device.destroyBuffer(staging_buffer);
-    vk_device.freeMemory(staging_buffer_mem);
   }
 
-  //~ Scope 9: Shader + Pipeline + Descriptor Set Layout
-  constexpr Array VERTICES{
-      Vertex{{-0.5f, -0.5f}, {1.0f, 0.0f, 0.0f}},
-      Vertex{ {0.5f, -0.5f}, {0.0f, 1.0f, 0.0f}},
-      Vertex{  {0.5f, 0.5f}, {0.0f, 0.0f, 1.0f}},
-      Vertex{ {-0.5f, 0.5f}, {1.0f, 1.0f, 1.0f}}
-  };
-  constexpr Array<U16, 6> INDICES = {0, 1, 2, 2, 3, 0};
-
-  vk::ShaderModule   shader_module{};
-  vk::PipelineLayout pipeline_layout{};
-  vk::Pipeline       graphics_pipeline{};
+  vk::ImageView tex_image_view{};
   {
+    // TODO: extract to create_texture_image_view(device, image, format) -> ImageView
+    //~ Texture image views
+    tex_image_view =
+        create_image_view(vk_device, tex_image, vk::Format::eR8G8B8A8Srgb, vk::ImageAspectFlagBits::eColor);
+  }
+
+  // TODO: extract to create_texture_sampler(device, phys_dev) -> Sampler
+  //~ Sampler
+  vk::Sampler tex_sampler = nullptr;
+  {
+    vk::PhysicalDeviceProperties properties = vk_phys_dev.getProperties();
+    vk::SamplerCreateInfo        sampler_info{.magFilter               = vk::Filter::eLinear,
+                                              .minFilter               = vk::Filter::eLinear,
+                                              .mipmapMode              = vk::SamplerMipmapMode::eLinear,
+                                              .addressModeU            = vk::SamplerAddressMode::eRepeat,
+                                              .addressModeV            = vk::SamplerAddressMode::eRepeat,
+                                              .addressModeW            = vk::SamplerAddressMode::eRepeat,
+                                              .mipLodBias              = 0.0f,
+                                              .anisotropyEnable        = vk::True,
+                                              .maxAnisotropy           = properties.limits.maxSamplerAnisotropy,
+                                              .compareEnable           = vk::False,
+                                              .compareOp               = vk::CompareOp::eAlways,
+                                              .minLod                  = 0.0f,
+                                              .maxLod                  = 0.0f,
+                                              .borderColor             = vk::BorderColor::eIntOpaqueBlack,
+                                              .unnormalizedCoordinates = vk::False};
+    tex_sampler = abort_if_vk_error(vk_device.createSampler(sampler_info));
+  }
+  // TODO: extract to create_pipeline(device, format, render_format, extent, arena) -> {pipeline, layout, module,
+  // ds_layout}
+  //~ Shader + Pipeline + Descriptor Set Layout
+
+  vk::ShaderModule        shader_module{};
+  vk::PipelineLayout      pipeline_layout{};
+  vk::Pipeline            graphics_pipeline{};
+  vk::DescriptorSetLayout descriptor_set_layout{};
+  vk::Image               depth_image{};
+  vk::ImageView           depth_image_view{};
+  {
+    // TODO: extract to create_shader_module(device, arena, path) -> ShaderModule
+    //~ Shader Module
     String8                    shader_code = read_file(app_arena, str8_lit("assets/shaders/shader.spv"));
     vk::ShaderModuleCreateInfo module_info{.codeSize = shader_code.size * sizeof(U8),
                                            .pCode    = reinterpret_cast<U32 *>(shader_code.str)};
     shader_module = abort_if_vk_error(vk_device.createShaderModule(module_info));
 
+    //~ Pipeline state infos
     vk::PipelineShaderStageCreateInfo vert_shader_stage_info{.stage  = vk::ShaderStageFlagBits::eVertex,
                                                              .module = shader_module,
                                                              .pName  = "vert_main"};
@@ -464,13 +532,14 @@ int main() {
     Array                              dynamic_states = {vk::DynamicState::eViewport, vk::DynamicState::eScissor};
     vk::PipelineDynamicStateCreateInfo dynamic_state{.dynamicStateCount = 2, .pDynamicStates = dynamic_states};
 
-    vk::VertexInputBindingDescription             binding_descriptions   = Vertex::get_binding_description();
-    Array<vk::VertexInputAttributeDescription, 2> attribute_descriptions = Vertex::get_attribute_descriptions();
+    auto binding_descriptions   = Vertex::get_binding_description();
+    auto attribute_descriptions = Vertex::get_attribute_descriptions();
 
-    vk::PipelineVertexInputStateCreateInfo   vertex_input_info{.vertexBindingDescriptionCount   = 1,
-                                                               .pVertexBindingDescriptions      = &binding_descriptions,
-                                                               .vertexAttributeDescriptionCount = 2,
-                                                               .pVertexAttributeDescriptions = attribute_descriptions};
+    vk::PipelineVertexInputStateCreateInfo vertex_input_info{
+        .vertexBindingDescriptionCount   = 1,
+        .pVertexBindingDescriptions      = &binding_descriptions,
+        .vertexAttributeDescriptionCount = attribute_descriptions.size(),
+        .pVertexAttributeDescriptions    = attribute_descriptions};
     vk::PipelineInputAssemblyStateCreateInfo input_assembly{.topology = vk::PrimitiveTopology::eTriangleList};
     vk::PipelineViewportStateCreateInfo      viewport_state{.viewportCount = 1, .scissorCount = 1};
 
@@ -493,13 +562,37 @@ int main() {
                                                          .attachmentCount = 1,
                                                          .pAttachments    = &color_blend_attachment};
 
-    vk::DescriptorSetLayoutBinding    ubo_layout_binding{.binding         = 0,
-                                                         .descriptorType  = vk::DescriptorType::eUniformBuffer,
-                                                         .descriptorCount = 1,
-                                                         .stageFlags      = vk::ShaderStageFlagBits::eVertex};
-    vk::DescriptorSetLayoutCreateInfo dslci{.bindingCount = 1, .pBindings = &ubo_layout_binding};
-    vk::DescriptorSetLayout descriptor_set_layout = abort_if_vk_error(vk_device.createDescriptorSetLayout(dslci));
+    //~ Depth Resources
+    DepthResources depth = create_depth_resources(vk_phys_dev, vk_device, device_arena, swapchain_extent);
+    depth_image          = depth.image;
+    depth_image_view     = depth.image_view;
+    vk::Format                              depth_format = depth.format;
+    vk::PipelineDepthStencilStateCreateInfo depth_stencil{
+        .depthTestEnable       = vk::True,
+        .depthWriteEnable      = vk::True,
+        .depthCompareOp        = vk::CompareOp::eLess,
+        .depthBoundsTestEnable = vk::False,
+        .stencilTestEnable     = vk::False,
+    };
 
+    // TODO: extract to create_descriptor_set_layout(device, bindings) -> DescriptorSetLayout
+    //~ Descriptor set bindings
+    Array bindings{
+        vk::DescriptorSetLayoutBinding{.binding         = 0,
+                                       .descriptorType  = vk::DescriptorType::eUniformBuffer,
+                                       .descriptorCount = 1,
+                                       .stageFlags      = vk::ShaderStageFlagBits::eVertex  },
+        vk::DescriptorSetLayoutBinding{.binding         = 1,
+                                       .descriptorType  = vk::DescriptorType::eCombinedImageSampler,
+                                       .descriptorCount = 1,
+                                       .stageFlags      = vk::ShaderStageFlagBits::eFragment}
+    };
+
+    vk::DescriptorSetLayoutCreateInfo dslci{.bindingCount = bindings.size(), .pBindings = bindings};
+    descriptor_set_layout = abort_if_vk_error(vk_device.createDescriptorSetLayout(dslci));
+
+    // TODO: extract to create_graphics_pipeline(...) -> {Pipeline, PipelineLayout}
+    //~ Pipeline Creation
     PROFILE_START("pipeline_creation");
     vk::PipelineLayoutCreateInfo pipeline_layout_info{.setLayoutCount         = 1,
                                                       .pSetLayouts            = &descriptor_set_layout,
@@ -514,113 +607,99 @@ int main() {
         .pViewportState      = &viewport_state,
         .pRasterizationState = &rasterizer,
         .pMultisampleState   = &multisampling,
+        .pDepthStencilState  = &depth_stencil,
         .pColorBlendState    = &color_blending,
         .pDynamicState       = &dynamic_state,
         .layout              = pipeline_layout,
         .renderPass          = nullptr,
     };
-    vk::PipelineRenderingCreateInfo prci{.colorAttachmentCount = 1, .pColorAttachmentFormats = &chosen_format};
-    vk::StructureChain              pipeline_create_info_chain{gpci, prci};
+    vk::PipelineRenderingCreateInfo prci{
+        .colorAttachmentCount    = 1,
+        .pColorAttachmentFormats = &chosen_format,
+        .depthAttachmentFormat   = depth_format,
+    };
+    vk::StructureChain pipeline_create_info_chain{gpci, prci};
 
     graphics_pipeline = abort_if_vk_error(
         vk_device.createGraphicsPipeline(nullptr, pipeline_create_info_chain.get<vk::GraphicsPipelineCreateInfo>()));
     U64 pipe_cycles = PROFILE_END();
     printf("Pipeline creation: %lu cycles\n", pipe_cycles);
-
-    vk_device.destroyDescriptorSetLayout(descriptor_set_layout);
   }
 
-  //~ Scope 10: Vertex + Index Buffers
-  vk::Buffer       vertex_buffer{};
-  vk::DeviceMemory vertex_buffer_memory{};
-  vk::Buffer       index_buffer{};
-  vk::DeviceMemory index_buffer_memory{};
+  // TODO: extract to create_geometry_buffers(phys_dev, device, host_arena, device_arena, pool, queue, VERTICES,
+  // INDICES) -> {vertex_buffer, index_buffer}
+  //~ Vertex + Index Buffers
+  vk::Buffer vertex_buffer{};
+  vk::Buffer index_buffer{};
   {
     {
       vk::DeviceSize buffer_size = VERTICES.array_size();
 
-      auto [staging_buffer, staging_buffer_memory] =
-          create_buffer(vk_phys_dev,
-                        vk_device,
-                        buffer_size,
-                        vk::BufferUsageFlagBits::eTransferSrc,
-                        vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent);
+      auto [staging_buffer, staging_alloc] =
+          create_buffer(vk_phys_dev, vk_device, buffer_size, vk::BufferUsageFlagBits::eTransferSrc, host_arena);
 
-      void *staging_data = abort_if_vk_error(vk_device.mapMemory(staging_buffer_memory, 0, buffer_size));
-      MemoryCopy(staging_data, VERTICES, buffer_size);
-      vk_device.unmapMemory(staging_buffer_memory);
+      MemoryCopy(staging_alloc.mapped, VERTICES, buffer_size);
 
-      std::tie(vertex_buffer, vertex_buffer_memory) =
+      auto [vb, vb_alloc] =
           create_buffer(vk_phys_dev,
                         vk_device,
                         buffer_size,
                         vk::BufferUsageFlagBits::eVertexBuffer | vk::BufferUsageFlagBits::eTransferDst,
-                        vk::MemoryPropertyFlagBits::eDeviceLocal);
+                        device_arena);
+      vertex_buffer = vb;
+      (void)vb_alloc;
       copy_buffer(vk_device, command_pool, graphics_queue, staging_buffer, vertex_buffer, buffer_size);
       vk_device.destroyBuffer(staging_buffer);
-      vk_device.freeMemory(staging_buffer_memory);
     }
     {
       vk::DeviceSize buffer_size = INDICES.array_size();
 
-      auto [staging_buffer, staging_buffer_memory] =
-          create_buffer(vk_phys_dev,
-                        vk_device,
-                        buffer_size,
-                        vk::BufferUsageFlagBits::eTransferSrc,
-                        vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent);
+      auto [staging_buffer, staging_alloc] =
+          create_buffer(vk_phys_dev, vk_device, buffer_size, vk::BufferUsageFlagBits::eTransferSrc, host_arena);
 
-      void *staging_data = abort_if_vk_error(vk_device.mapMemory(staging_buffer_memory, 0, buffer_size));
-      MemoryCopy(staging_data, INDICES, buffer_size);
-      vk_device.unmapMemory(staging_buffer_memory);
+      MemoryCopy(staging_alloc.mapped, INDICES, buffer_size);
 
-      std::tie(index_buffer, index_buffer_memory) =
-          create_buffer(vk_phys_dev,
-                        vk_device,
-                        buffer_size,
-                        vk::BufferUsageFlagBits::eIndexBuffer | vk::BufferUsageFlagBits::eTransferDst,
-                        vk::MemoryPropertyFlagBits::eDeviceLocal);
+      auto [ib, ib_alloc] = create_buffer(vk_phys_dev,
+                                          vk_device,
+                                          buffer_size,
+                                          vk::BufferUsageFlagBits::eIndexBuffer | vk::BufferUsageFlagBits::eTransferDst,
+                                          device_arena);
+      index_buffer        = ib;
+      (void)ib_alloc;
       copy_buffer(vk_device, command_pool, graphics_queue, staging_buffer, index_buffer, buffer_size);
       vk_device.destroyBuffer(staging_buffer);
-      vk_device.freeMemory(staging_buffer_memory);
     }
   }
 
-  //~ Scope 11: Uniform Buffers + Descriptors
+  // TODO: extract to create_uniform_descriptors(device, phys_dev, host_arena, tex_sampler, tex_image, ...) ->
+  // {uniform_buffers, descriptor_pool, descriptor_sets, uniform_buffers_mapped}
+  //~ Uniform Buffers + Descriptors
   Array<vk::Buffer, MAX_FRAMES_IN_FLIGHT>        uniform_buffers{};
-  Array<vk::DeviceMemory, MAX_FRAMES_IN_FLIGHT>  uniform_buffers_memory{};
   Array<void *, MAX_FRAMES_IN_FLIGHT>            uniform_buffers_mapped{};
   vk::DescriptorPool                             descriptor_pool{};
   Array<vk::DescriptorSet, MAX_FRAMES_IN_FLIGHT> descriptor_sets{};
   {
     for (U64 i = 0; i < MAX_FRAMES_IN_FLIGHT; ++i) {
       vk::DeviceSize buffer_size = sizeof(UniformBufferObject);
-      std::tie(uniform_buffers[i], uniform_buffers_memory[i]) =
-          create_buffer(vk_phys_dev,
-                        vk_device,
-                        buffer_size,
-                        vk::BufferUsageFlagBits::eUniformBuffer,
-                        vk::MemoryPropertyFlagBits::eHostVisible | vk::MemoryPropertyFlagBits::eHostCoherent);
-      uniform_buffers_mapped[i] = abort_if_vk_error(vk_device.mapMemory(uniform_buffers_memory[i], 0, buffer_size));
+      auto [ub, ub_alloc] =
+          create_buffer(vk_phys_dev, vk_device, buffer_size, vk::BufferUsageFlagBits::eUniformBuffer, host_arena);
+      uniform_buffers[i]        = ub;
+      uniform_buffers_mapped[i] = ub_alloc.mapped;
     }
 
-    vk::DescriptorPoolSize       pool_size{.type            = vk::DescriptorType::eUniformBuffer,
-                                           .descriptorCount = MAX_FRAMES_IN_FLIGHT};
+    Array pool_size{
+        vk::DescriptorPoolSize{                  .type = vk::DescriptorType::eUniformBuffer,.descriptorCount = MAX_FRAMES_IN_FLIGHT                              },
+        vk::DescriptorPoolSize{.type            = vk::DescriptorType::eCombinedImageSampler,
+                               .descriptorCount = MAX_FRAMES_IN_FLIGHT}
+    };
     vk::DescriptorPoolCreateInfo dpci{.flags         = vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet,
                                       .maxSets       = MAX_FRAMES_IN_FLIGHT,
-                                      .poolSizeCount = 1,
-                                      .pPoolSizes    = &pool_size};
+                                      .poolSizeCount = pool_size.size(),
+                                      .pPoolSizes    = pool_size};
     descriptor_pool = abort_if_vk_error(vk_device.createDescriptorPool(dpci));
 
-    vk::DescriptorSetLayoutBinding    ubo_layout_binding{.binding         = 0,
-                                                         .descriptorType  = vk::DescriptorType::eUniformBuffer,
-                                                         .descriptorCount = 1,
-                                                         .stageFlags      = vk::ShaderStageFlagBits::eVertex};
-    vk::DescriptorSetLayoutCreateInfo dslci{.bindingCount = 1, .pBindings = &ubo_layout_binding};
-    vk::DescriptorSetLayout           temp_layout = abort_if_vk_error(vk_device.createDescriptorSetLayout(dslci));
-
     Array<vk::DescriptorSetLayout, MAX_FRAMES_IN_FLIGHT> layouts{};
-    fill_array(layouts, temp_layout);
+    fill_array(layouts, descriptor_set_layout);
 
     vk::DescriptorSetAllocateInfo alloc_info{.descriptorPool     = descriptor_pool,
                                              .descriptorSetCount = layouts.size(),
@@ -631,29 +710,71 @@ int main() {
       vk::DescriptorBufferInfo buffer_info{.buffer = uniform_buffers[i],
                                            .offset = 0,
                                            .range  = sizeof(UniformBufferObject)};
-      vk::WriteDescriptorSet   descriptor_write{.dstSet          = descriptor_sets[i],
-                                                .dstBinding      = 0,
-                                                .dstArrayElement = 0,
-                                                .descriptorCount = 1,
-                                                .descriptorType  = vk::DescriptorType::eUniformBuffer,
-                                                .pBufferInfo     = &buffer_info};
-      vk_device.updateDescriptorSets(descriptor_write, {});
+      vk::DescriptorImageInfo  image_info{.sampler     = tex_sampler,
+                                          .imageView   = tex_image_view,
+                                          .imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal};
+      Array                    descriptor_writes{
+          vk::WriteDescriptorSet{.dstSet          = descriptor_sets[i],
+                                 .dstBinding      = 0,
+                                 .dstArrayElement = 0,
+                                 .descriptorCount = 1,
+                                 .descriptorType  = vk::DescriptorType::eUniformBuffer,
+                                 .pBufferInfo     = &buffer_info},
+          vk::WriteDescriptorSet{.dstSet          = descriptor_sets[i],
+                                 .dstBinding      = 1,
+                                 .dstArrayElement = 0,
+                                 .descriptorCount = 1,
+                                 .descriptorType  = vk::DescriptorType::eCombinedImageSampler,
+                                 .pImageInfo      = &image_info }
+      };
+      vk_device.updateDescriptorSets(descriptor_writes.data, {});
     }
-
-    vk_device.destroyDescriptorSetLayout(temp_layout);
   }
 
-  //~ Scope 12: Main Loop
+  //~ Main Loop
   {
     U64 absolute_frame_index = 0;
     (void)absolute_frame_index;
-    U32                 current_frame = 0;
-    vk::ClearColorValue clear_color{};
-    FrameClock          clock{.target_ms = target_frame_ms};
+    U32            current_frame = 0;
+    vk::ClearValue clear_color{};
+    float          rgba[4] = {0.0f, 0.00f, 0.0f, 1.0f};
+    MemoryCopy(&clear_color, rgba, sizeof(rgba));
+    vk::ClearValue clear_depth = {
+        .depthStencil = {.depth = 1.0, .stencil = 0}
+    };
+
+    FrameClock clock{.target_ms = target_frame_ms};
     while (!glfwWindowShouldClose(window.glfw_window)) {
       clock.start();
       frame_arena->clear();
       glfwPollEvents();
+
+      if (!monitor_detected) {
+        int wx, wy, ww, wh;
+        glfwGetWindowPos(window.glfw_window, &wx, &wy);
+        glfwGetWindowSize(window.glfw_window, &ww, &wh);
+        int win_cx = wx + ww / 2;
+        int win_cy = wy + wh / 2;
+
+        U32           monitor_hz = 60;
+        int           count;
+        GLFWmonitor **monitors = glfwGetMonitors(&count);
+        for (int i = 0; i < count; i++) {
+          int mx, my;
+          glfwGetMonitorPos(monitors[i], &mx, &my);
+          GLFWvidmode const *mode = glfwGetVideoMode(monitors[i]);
+          if (win_cx >= mx && win_cx < mx + static_cast<int>(mode->width) && win_cy >= my &&
+              win_cy < my + static_cast<int>(mode->height)) {
+            monitor_hz = mode->refreshRate > 0 ? mode->refreshRate : 60;
+            break;
+          }
+        }
+        target_frame_ms = 1000.0 / monitor_hz;
+        clock.target_ms = target_frame_ms;
+        printf("Monitor: %u Hz (target: %.3f ms/frame)\n", monitor_hz, target_frame_ms);
+        monitor_detected = true;
+      }
+
       WindowEvent event{};
       while (window.events.pop(event)) {
         switch (event.type) {
@@ -668,14 +789,6 @@ int main() {
           case KEY: {
             WKeyEvent &key = event.key;
             printf("%d, %d, %d, %d\n", key.key, key.action, key.mods, key.scancode);
-            if (key.action == GLFW_PRESS) {
-              if (key.key == GLFW_KEY_R)
-                clear_color = {{{0.15f, 0.05f, 0.05f, 1.0f}}};
-              if (key.key == GLFW_KEY_G)
-                clear_color = {{{0.05f, 0.15f, 0.05f, 1.0f}}};
-              if (key.key == GLFW_KEY_B)
-                clear_color = {{{0.05f, 0.05f, 0.15f, 1.0f}}};
-            }
             break;
           }
           case SCROLL: {
@@ -719,6 +832,7 @@ int main() {
         }
       }
 
+      // TODO: extract to render_frame(vk_device, ...) -> bool (swapchain_needs_rebuild)
       abort_if_vk_error(vk_device.waitForFences(1, &in_flight_fences[current_frame], VK_TRUE, UINT64_MAX));
 
       bool swapchain_needs_rebuild = false;
@@ -743,7 +857,10 @@ int main() {
                            swapchain_extent,
                            chosen_format,
                            chosen_color_space,
-                           chosen_present_mode);
+                           chosen_present_mode,
+                           &depth_image,
+                           &depth_image_view,
+                           device_arena);
         continue;
       }
       if (acquire_res == VK_SUBOPTIMAL_KHR) {
@@ -766,27 +883,42 @@ int main() {
       abort_if_vk_error(cmd.reset());
       abort_if_vk_error(cmd.begin({.flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit}));
 
-      vk::ImageMemoryBarrier2 to_render_barrier =
-          make_image_barrier(image_index,
-                             sc,
-                             vk::ImageLayout::eUndefined,
-                             vk::ImageLayout::eColorAttachmentOptimal,
-                             {},
-                             vk::AccessFlagBits2::eColorAttachmentWrite,
-                             vk::PipelineStageFlagBits2::eColorAttachmentOutput,
-                             vk::PipelineStageFlagBits2::eColorAttachmentOutput);
-      cmd.pipelineBarrier2(dep_info(&to_render_barrier));
+      transition_image_layout(cmd,
+                              sc->images[image_index],
+                              vk::ImageLayout::eUndefined,
+                              vk::ImageLayout::eColorAttachmentOptimal,
+                              {},
+                              vk::AccessFlagBits2::eColorAttachmentWrite,
+                              vk::PipelineStageFlagBits2::eColorAttachmentOutput,
+                              vk::PipelineStageFlagBits2::eColorAttachmentOutput,
+                              vk::ImageAspectFlagBits::eColor);
+      transition_image_layout(
+          cmd,
+          depth_image,
+          vk::ImageLayout::eUndefined,
+          vk::ImageLayout::eDepthAttachmentOptimal,
+          vk::AccessFlagBits2::eDepthStencilAttachmentWrite,
+          vk::AccessFlagBits2::eDepthStencilAttachmentWrite,
+          vk::PipelineStageFlagBits2::eEarlyFragmentTests | vk::PipelineStageFlagBits2::eLateFragmentTests,
+          vk::PipelineStageFlagBits2::eEarlyFragmentTests | vk::PipelineStageFlagBits2::eLateFragmentTests,
+          vk::ImageAspectFlagBits::eDepth);
 
       vk::RenderingAttachmentInfo color_attachment{.imageView   = sc->image_views[image_index],
                                                    .imageLayout = vk::ImageLayout::eAttachmentOptimal,
                                                    .loadOp      = vk::AttachmentLoadOp::eClear,
                                                    .storeOp     = vk::AttachmentStoreOp::eStore,
                                                    .clearValue  = {clear_color}};
+      vk::RenderingAttachmentInfo depth_attachment = {.imageView   = depth_image_view,
+                                                      .imageLayout = vk::ImageLayout::eDepthAttachmentOptimal,
+                                                      .loadOp      = vk::AttachmentLoadOp::eClear,
+                                                      .storeOp     = vk::AttachmentStoreOp::eDontCare,
+                                                      .clearValue  = clear_depth};
       vk::RenderingInfo           rendering_info{
                     .renderArea           = vk::Rect2D{{0, 0}, swapchain_extent},
                     .layerCount           = 1,
                     .colorAttachmentCount = 1,
-                    .pColorAttachments    = &color_attachment
+                    .pColorAttachments    = &color_attachment,
+                    .pDepthAttachment     = &depth_attachment
       };
       cmd.beginRendering(rendering_info);
 
@@ -809,16 +941,15 @@ int main() {
       cmd.drawIndexed(INDICES.size(), 1, 0, 0, 0);
       cmd.endRendering();
 
-      vk::ImageMemoryBarrier2 to_present_barrier =
-          make_image_barrier(image_index,
-                             sc,
-                             vk::ImageLayout::eColorAttachmentOptimal,
-                             vk::ImageLayout::ePresentSrcKHR,
-                             vk::AccessFlagBits2::eColorAttachmentWrite,
-                             {},
-                             vk::PipelineStageFlagBits2::eColorAttachmentOutput,
-                             vk::PipelineStageFlagBits2::eBottomOfPipe);
-      cmd.pipelineBarrier2(dep_info(&to_present_barrier));
+      transition_image_layout(cmd,
+                              sc->images[image_index],
+                              vk::ImageLayout::eColorAttachmentOptimal,
+                              vk::ImageLayout::ePresentSrcKHR,
+                              vk::AccessFlagBits2::eColorAttachmentWrite,
+                              {},
+                              vk::PipelineStageFlagBits2::eColorAttachmentOutput,
+                              vk::PipelineStageFlagBits2::eBottomOfPipe,
+                              vk::ImageAspectFlagBits::eColor);
       sc->image_initialized[image_index] = true;
       abort_if_vk_error(cmd.end());
 
@@ -867,7 +998,10 @@ int main() {
                            swapchain_extent,
                            chosen_format,
                            chosen_color_space,
-                           chosen_present_mode);
+                           chosen_present_mode,
+                           &depth_image,
+                           &depth_image_view,
+                           device_arena);
         window.framebuffer_resized = false;
       } else if (present_res != VK_SUCCESS) {
         std::fprintf(stderr, "vkQueuePresentKHR failed: %d\n", present_res);
@@ -905,55 +1039,60 @@ int main() {
     }
   }
 
-  //~ Cleanup
-  abort_if_vk_error(vk_device.waitIdle());
+  // TODO: extract to destroy_vulkan_resources(...) -> void
+  //~ Cleanup (reverse of creation order)
+  {
+    abort_if_vk_error(vk_device.waitIdle());
 
-  for (U32 i = 0; i < SC_MAX_GENERATIONS; ++i) {
-    SwapchainResources *gen = &swapchain_pool[i];
-    for (U32 j = 0; j < gen->image_count; ++j) {
-      if (gen->image_views[j])
-        vk_device.destroyImageView(gen->image_views[j]);
-      if (gen->render_finished_sems[j])
-        vk_device.destroySemaphore(gen->render_finished_sems[j]);
+    abort_if_vk_error(vk_device.freeDescriptorSets(descriptor_pool, descriptor_sets.size(), descriptor_sets));
+    vk_device.destroyDescriptorPool(descriptor_pool);
+    for (U64 i = 0; i < MAX_FRAMES_IN_FLIGHT; ++i)
+      vk_device.destroyBuffer(uniform_buffers[i]);
+    vk_device.destroyBuffer(index_buffer);
+    vk_device.destroyBuffer(vertex_buffer);
+    vk_device.destroyPipeline(graphics_pipeline);
+    vk_device.destroyPipelineLayout(pipeline_layout);
+    vk_device.destroyDescriptorSetLayout(descriptor_set_layout);
+    vk_device.destroyImageView(depth_image_view);
+    vk_device.destroyImage(depth_image);
+    vk_device.destroyShaderModule(shader_module);
+    vk_device.destroySampler(tex_sampler);
+    vk_device.destroyImageView(tex_image_view);
+    vk_device.destroyImage(tex_image);
+    vk_device.destroyCommandPool(command_pool);
+    for (U32 i = 0; i < SC_MAX_GENERATIONS; ++i) {
+      SwapchainResources *gen = &swapchain_pool[i];
+      for (U32 j = 0; j < gen->image_count; ++j) {
+        if (gen->render_finished_sems[j])
+          vk_device.destroySemaphore(gen->render_finished_sems[j]);
+        if (gen->image_views[j])
+          vk_device.destroyImageView(gen->image_views[j]);
+      }
     }
-  }
-  for (U64 i = 0; i < MAX_FRAMES_IN_FLIGHT; ++i) {
-    vk_device.destroyFence(in_flight_fences[i]);
-    vk_device.destroyFence(acquire_fences[i]);
-  }
-  vk_device.destroyPipelineLayout(pipeline_layout);
-  vk_device.destroyPipeline(graphics_pipeline);
-  abort_if_vk_error(vk_device.freeDescriptorSets(descriptor_pool, descriptor_sets.size(), descriptor_sets));
-  vk_device.destroyDescriptorPool(descriptor_pool);
-  vk_device.destroyShaderModule(shader_module);
-  vk_device.destroyImage(tex_image);
-  vk_device.freeMemory(tex_image_memory);
-  vk_device.destroyCommandPool(command_pool);
-  vk_device.destroyBuffer(vertex_buffer);
-  vk_device.freeMemory(vertex_buffer_memory);
-  vk_device.destroyBuffer(index_buffer);
-  vk_device.freeMemory(index_buffer_memory);
-  for (U64 i = 0; i < MAX_FRAMES_IN_FLIGHT; ++i) {
-    vk_device.destroyBuffer(uniform_buffers[i]);
-    vk_device.freeMemory(uniform_buffers_memory[i]);
-  }
-  vk_device.destroySwapchainKHR(vk_swapchain);
-  vk_device.destroy();
-
+    for (U64 i = 0; i < MAX_FRAMES_IN_FLIGHT; ++i)
+      vk_device.destroyFence(acquire_fences[i]);
+    for (U64 i = 0; i < MAX_FRAMES_IN_FLIGHT; ++i)
+      vk_device.destroyFence(in_flight_fences[i]);
+    vk_device.destroySwapchainKHR(vk_swapchain);
+    destroy_gpu_arena(vk_device, device_arena);
+    destroy_gpu_arena(vk_device, host_arena);
+    vk_device.destroy();
 #ifdef SD2_DEBUG
-  if (debug_messenger) {
-    PFN_vkDestroyDebugUtilsMessengerEXT func = reinterpret_cast<PFN_vkDestroyDebugUtilsMessengerEXT>(
-        vk_get_instance_proc_addr(static_cast<VkInstance>(vk_instance), "vkDestroyDebugUtilsMessengerEXT"));
-    if (func)
-      func(static_cast<VkInstance>(vk_instance), debug_messenger, nullptr);
-  }
+    if (debug_messenger) {
+      PFN_vkDestroyDebugUtilsMessengerEXT func = reinterpret_cast<PFN_vkDestroyDebugUtilsMessengerEXT>(
+          vk_get_instance_proc_addr(static_cast<VkInstance>(vk_instance), "vkDestroyDebugUtilsMessengerEXT"));
+      if (func)
+        func(static_cast<VkInstance>(vk_instance), debug_messenger, nullptr);
+    }
 #endif
-  vk_instance.destroySurfaceKHR(vk_surface);
-  vk_instance.destroy();
-  glfwDestroyWindow(window.glfw_window);
-  glfwTerminate();
-  arena_release(frame_arena);
-  arena_release(app_arena);
-  thread_ctx_release();
+    vk_instance.destroySurfaceKHR(vk_surface);
+    vk_instance.destroy();
+    // glfw
+    glfwDestroyWindow(window.glfw_window);
+    glfwTerminate();
+    arena_release(frame_arena);
+    arena_release(app_arena);
+    thread_ctx_release();
+  }
   return 0;
 }

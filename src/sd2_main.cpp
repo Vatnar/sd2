@@ -170,7 +170,8 @@ int main() {
   TracyVkCtx g_tracy_vk_ctx = nullptr;
   {
     auto vk_tracy_cmds = vk_abort_if_error(vk_device.allocateCommandBuffers(
-        vk::CommandBufferAllocateInfo{.commandPool = vk_command_pool, .level = vk::CommandBufferLevel::ePrimary, .commandBufferCount = 1}));
+        vk::CommandBufferAllocateInfo{.commandPool = vk_command_pool, .level = vk::CommandBufferLevel::ePrimary,
+                                      .commandBufferCount = 1}));
     vk::CommandBuffer vk_tracy_cmd = vk_tracy_cmds[0];
     g_tracy_vk_ctx = TracyVkContext(
         static_cast<VkPhysicalDevice>(vk_phys_dev),
@@ -567,94 +568,95 @@ int main() {
       ZoneScopedN("Frame");
       clock.start();
       frame_arena->clear();
-      { ZoneScopedN("Events"); glfwPollEvents();
+      {
+        ZoneScopedN("Events");
+        glfwPollEvents();
 
-      if (!monitor_detected) {
-        int wx, wy, ww, wh;
-        glfwGetWindowPos(window.glfw_window, &wx, &wy);
-        glfwGetWindowSize(window.glfw_window, &ww, &wh);
-        int win_cx = wx + ww / 2;
-        int win_cy = wy + wh / 2;
+        if (!monitor_detected) {
+          int wx, wy, ww, wh;
+          glfwGetWindowPos(window.glfw_window, &wx, &wy);
+          glfwGetWindowSize(window.glfw_window, &ww, &wh);
+          int win_cx = wx + ww / 2;
+          int win_cy = wy + wh / 2;
 
-        U32 monitor_hz = 60;
-        int count;
-        GLFWmonitor **monitors = glfwGetMonitors(&count);
-        for (int i = 0; i < count; i++) {
-          int mx, my;
-          glfwGetMonitorPos(monitors[i], &mx, &my);
-          GLFWvidmode const *mode = glfwGetVideoMode(monitors[i]);
-          if (win_cx >= mx && win_cx < mx + static_cast<int>(mode->width) && win_cy >= my &&
-              win_cy < my + static_cast<int>(mode->height)) {
-            monitor_hz = mode->refreshRate > 0 ? mode->refreshRate : 60;
-            break;
-          }
-        }
-        target_frame_ms = 1000.0 / monitor_hz;
-        clock.target_ms = target_frame_ms;
-        printf("Monitor: %u Hz (target: %.3f ms/frame)\n", monitor_hz, target_frame_ms);
-        monitor_detected = true;
-      }
-
-      WindowEvent event{};
-      while (window.events.pop(event)) {
-        switch (event.type) {
-            using enum WindowEventType;
-          case NONE: {
-            break;
-          }
-          case RESIZE: {
-            window.framebuffer_resized = true;
-            break;
-          }
-          case KEY: {
-            WKeyEvent &key = event.key;
-            if (key.key == GLFW_KEY_P && key.action == GLFW_PRESS && (key.mods & GLFW_MOD_CONTROL))
-              debug_ui_palette_toggle(&palette_state);
-            break;
-          }
-          case SCROLL: {
-            break;
-          }
-          case CURSOR: {
-            break;
-          }
-          case MBUTTON: {
-            WMButtonEvent &mbutton = event.mbutton;
-            char const *action = mbutton.action == GLFW_PRESS ? "Pressed" : "Released";
-            switch (mbutton.button) {
-              default: {
-                printf("other mouse button: %d\n", mbutton.button);
-                break;
-              }
-              case 0: {
-                printf("left click %s\n", action);
-                break;
-              }
-              case 1: {
-                printf("right click %s\n", action);
-                break;
-              }
-              case 2: {
-                printf("middle click %s\n", action);
-                break;
-              }
+          U32 monitor_hz = 60;
+          int count;
+          GLFWmonitor **monitors = glfwGetMonitors(&count);
+          for (int i = 0; i < count; i++) {
+            int mx, my;
+            glfwGetMonitorPos(monitors[i], &mx, &my);
+            GLFWvidmode const *mode = glfwGetVideoMode(monitors[i]);
+            if (win_cx >= mx && win_cx < mx + static_cast<int>(mode->width) && win_cy >= my &&
+                win_cy < my + static_cast<int>(mode->height)) {
+              monitor_hz = mode->refreshRate > 0 ? mode->refreshRate : 60;
+              break;
             }
-            break;
           }
-          case CLOSE: {
-            break;
-          }
-          case REFRESH: {
-            break;
-          }
-          case TEXT: {
-            break;
+          target_frame_ms = 1000.0 / monitor_hz;
+          clock.target_ms = target_frame_ms;
+          printf("Monitor: %u Hz (target: %.3f ms/frame)\n", monitor_hz, target_frame_ms);
+          monitor_detected = true;
+        }
+
+        WindowEvent event{};
+        while (window.events.pop(event)) {
+          switch (event.type) {
+              using enum WindowEventType;
+            case NONE: {
+              break;
+            }
+            case RESIZE: {
+              window.framebuffer_resized = true;
+              break;
+            }
+            case KEY: {
+              WKeyEvent &key = event.key;
+              if (key.key == GLFW_KEY_P && key.action == GLFW_PRESS && (key.mods & GLFW_MOD_CONTROL))
+                debug_ui_palette_toggle(&palette_state);
+              break;
+            }
+            case SCROLL: {
+              break;
+            }
+            case CURSOR: {
+              break;
+            }
+            case MBUTTON: {
+              WMButtonEvent &mbutton = event.mbutton;
+              switch (mbutton.button) {
+                default: {
+                  break;
+                }
+                case 0: {
+                  break;
+                }
+                case 1: {
+                  break;
+                }
+                case 2: {
+                  break;
+                }
+              }
+              break;
+            }
+            case CLOSE: {
+              break;
+            }
+            case REFRESH: {
+              break;
+            }
+            case TEXT: {
+              break;
+            }
           }
         }
       }
-      }
 
-      { ZoneScopedN("ImGui"); imgui_new_frame(); debug_ui_palette_render(&palette_state); }
+      {
+        ZoneScopedN("ImGui");
+        imgui_new_frame();
+        debug_ui_palette_render(&palette_state);
+      }
 
       // TODO: extract to render_frame(vk_device, ...) -> bool (swapchain_needs_rebuild)
       ZoneNamedN(___tracy_gpu_sync, "GpuSync", true);
@@ -709,83 +711,85 @@ int main() {
       vk_abort_if_error(vk_cmd.reset());
       vk_abort_if_error(vk_cmd.begin({.flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit}));
 
-      { TracyVkZone(g_tracy_vk_ctx, static_cast<VkCommandBuffer>(vk_cmd), "Render Scene");
-      vk_transition_image_layout(vk_cmd,
-                                 vk_sc->msaa_images[vk_image_index],
-                                 vk::ImageLayout::eUndefined,
-                                 vk::ImageLayout::eColorAttachmentOptimal,
-                                 {},
-                                 vk::AccessFlagBits2::eColorAttachmentWrite,
-                                 vk::PipelineStageFlagBits2::eColorAttachmentOutput,
-                                 vk::PipelineStageFlagBits2::eColorAttachmentOutput,
-                                 vk::ImageAspectFlagBits::eColor,
-                                 1);
-      vk_transition_image_layout(vk_cmd,
-                                 vk_sc->images[vk_image_index],
-                                 vk::ImageLayout::eUndefined,
-                                 vk::ImageLayout::eColorAttachmentOptimal,
-                                 {},
-                                 vk::AccessFlagBits2::eColorAttachmentWrite,
-                                 vk::PipelineStageFlagBits2::eColorAttachmentOutput,
-                                 vk::PipelineStageFlagBits2::eColorAttachmentOutput,
-                                 vk::ImageAspectFlagBits::eColor,
-                                 1);
-      vk_transition_image_layout(
-          vk_cmd,
-          vk_depth_image,
-          vk::ImageLayout::eUndefined,
-          vk::ImageLayout::eDepthAttachmentOptimal,
-          vk::AccessFlagBits2::eDepthStencilAttachmentWrite,
-          vk::AccessFlagBits2::eDepthStencilAttachmentWrite,
-          vk::PipelineStageFlagBits2::eEarlyFragmentTests | vk::PipelineStageFlagBits2::eLateFragmentTests,
-          vk::PipelineStageFlagBits2::eEarlyFragmentTests | vk::PipelineStageFlagBits2::eLateFragmentTests,
-          vk::ImageAspectFlagBits::eDepth,
-          1);
+      {
+        TracyVkZone(g_tracy_vk_ctx, static_cast<VkCommandBuffer>(vk_cmd), "Render Scene");
+        vk_transition_image_layout(vk_cmd,
+                                   vk_sc->msaa_images[vk_image_index],
+                                   vk::ImageLayout::eUndefined,
+                                   vk::ImageLayout::eColorAttachmentOptimal,
+                                   {},
+                                   vk::AccessFlagBits2::eColorAttachmentWrite,
+                                   vk::PipelineStageFlagBits2::eColorAttachmentOutput,
+                                   vk::PipelineStageFlagBits2::eColorAttachmentOutput,
+                                   vk::ImageAspectFlagBits::eColor,
+                                   1);
+        vk_transition_image_layout(vk_cmd,
+                                   vk_sc->images[vk_image_index],
+                                   vk::ImageLayout::eUndefined,
+                                   vk::ImageLayout::eColorAttachmentOptimal,
+                                   {},
+                                   vk::AccessFlagBits2::eColorAttachmentWrite,
+                                   vk::PipelineStageFlagBits2::eColorAttachmentOutput,
+                                   vk::PipelineStageFlagBits2::eColorAttachmentOutput,
+                                   vk::ImageAspectFlagBits::eColor,
+                                   1);
+        vk_transition_image_layout(
+            vk_cmd,
+            vk_depth_image,
+            vk::ImageLayout::eUndefined,
+            vk::ImageLayout::eDepthAttachmentOptimal,
+            vk::AccessFlagBits2::eDepthStencilAttachmentWrite,
+            vk::AccessFlagBits2::eDepthStencilAttachmentWrite,
+            vk::PipelineStageFlagBits2::eEarlyFragmentTests | vk::PipelineStageFlagBits2::eLateFragmentTests,
+            vk::PipelineStageFlagBits2::eEarlyFragmentTests | vk::PipelineStageFlagBits2::eLateFragmentTests,
+            vk::ImageAspectFlagBits::eDepth,
+            1);
 
-      vk::RenderingAttachmentInfo vk_color_attachment{.imageView = vk_sc->msaa_image_views[vk_image_index],
-                                                      .imageLayout = vk::ImageLayout::eAttachmentOptimal,
-                                                      .resolveMode = vk::ResolveModeFlagBits::eAverage,
-                                                      .resolveImageView = vk_sc->image_views[vk_image_index],
-                                                      .resolveImageLayout = vk::ImageLayout::eAttachmentOptimal,
-                                                      .loadOp = vk::AttachmentLoadOp::eClear,
-                                                      .storeOp = vk::AttachmentStoreOp::eDontCare,
-                                                      .clearValue = {vk_clear_color}};
-      vk::RenderingAttachmentInfo vk_depth_attachment = {.imageView = vk_depth_image_view,
-                                                         .imageLayout = vk::ImageLayout::eDepthAttachmentOptimal,
-                                                         .loadOp = vk::AttachmentLoadOp::eClear,
-                                                         .storeOp = vk::AttachmentStoreOp::eDontCare,
-                                                         .clearValue = vk_clear_depth};
-      vk::RenderingInfo vk_rendering_info{
-          .renderArea = vk::Rect2D{{0, 0}, vk_swapchain_extent},
-          .layerCount = 1,
-          .colorAttachmentCount = 1,
-          .pColorAttachments = &vk_color_attachment,
-          .pDepthAttachment = &vk_depth_attachment
-      };
-      vk_cmd.beginRendering(vk_rendering_info);
+        vk::RenderingAttachmentInfo vk_color_attachment{.imageView = vk_sc->msaa_image_views[vk_image_index],
+                                                        .imageLayout = vk::ImageLayout::eAttachmentOptimal,
+                                                        .resolveMode = vk::ResolveModeFlagBits::eAverage,
+                                                        .resolveImageView = vk_sc->image_views[vk_image_index],
+                                                        .resolveImageLayout = vk::ImageLayout::eAttachmentOptimal,
+                                                        .loadOp = vk::AttachmentLoadOp::eClear,
+                                                        .storeOp = vk::AttachmentStoreOp::eDontCare,
+                                                        .clearValue = {vk_clear_color}};
+        vk::RenderingAttachmentInfo vk_depth_attachment = {.imageView = vk_depth_image_view,
+                                                           .imageLayout = vk::ImageLayout::eDepthAttachmentOptimal,
+                                                           .loadOp = vk::AttachmentLoadOp::eClear,
+                                                           .storeOp = vk::AttachmentStoreOp::eDontCare,
+                                                           .clearValue = vk_clear_depth};
+        vk::RenderingInfo vk_rendering_info{
+            .renderArea = vk::Rect2D{{0, 0}, vk_swapchain_extent},
+            .layerCount = 1,
+            .colorAttachmentCount = 1,
+            .pColorAttachments = &vk_color_attachment,
+            .pDepthAttachment = &vk_depth_attachment
+        };
+        vk_cmd.beginRendering(vk_rendering_info);
 
-      vk_cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, vk_graphics_pipeline);
-      vk_cmd.setViewport(0,
-                         vk::Viewport(0.0f,
-                                      0.0f,
-                                      static_cast<float>(vk_swapchain_extent.width),
-                                      static_cast<float>(vk_swapchain_extent.height),
-                                      0.0f,
-                                      1.0f));
-      vk_cmd.setScissor(0, vk::Rect2D(vk::Offset2D(0, 0), vk_swapchain_extent));
-      vk_cmd.bindVertexBuffers(0, vk_vertex_buffer, {0});
-      vk_cmd.bindIndexBuffer(vk_index_buffer, 0, vk::IndexTypeValue<decltype(indices)::value_type>::value);
-      vk_cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics,
-                                vk_pipeline_layout,
-                                0,
-                                vk_descriptor_sets[current_frame],
-                                nullptr);
-      vk_cmd.drawIndexed(indices.size, 1, 0, 0, 0);
-      vk_cmd.endRendering();
+        vk_cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, vk_graphics_pipeline);
+        vk_cmd.setViewport(0,
+                           vk::Viewport(0.0f,
+                                        0.0f,
+                                        static_cast<float>(vk_swapchain_extent.width),
+                                        static_cast<float>(vk_swapchain_extent.height),
+                                        0.0f,
+                                        1.0f));
+        vk_cmd.setScissor(0, vk::Rect2D(vk::Offset2D(0, 0), vk_swapchain_extent));
+        vk_cmd.bindVertexBuffers(0, vk_vertex_buffer, {0});
+        vk_cmd.bindIndexBuffer(vk_index_buffer, 0, vk::IndexTypeValue<decltype(indices)::value_type>::value);
+        vk_cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics,
+                                  vk_pipeline_layout,
+                                  0,
+                                  vk_descriptor_sets[current_frame],
+                                  nullptr);
+        vk_cmd.drawIndexed(indices.size, 1, 0, 0, 0);
+        vk_cmd.endRendering();
       } // TracyVkZone("Render Scene")
 
-      { TracyVkZone(g_tracy_vk_ctx, static_cast<VkCommandBuffer>(vk_cmd), "ImGui Pass");
-      imgui_render(vk_cmd, vk_sc->image_views[vk_image_index], vk_swapchain_extent);
+      {
+        TracyVkZone(g_tracy_vk_ctx, static_cast<VkCommandBuffer>(vk_cmd), "ImGui Pass");
+        imgui_render(vk_cmd, vk_sc->image_views[vk_image_index], vk_swapchain_extent);
       } // TracyVkZone("ImGui Pass")
 
       TracyVkCollect(g_tracy_vk_ctx, static_cast<VkCommandBuffer>(vk_cmd));
@@ -803,26 +807,29 @@ int main() {
       vk_sc->image_initialized[vk_image_index] = true;
       vk_abort_if_error(vk_cmd.end());
 
-      { ZoneScopedN("UboUpdate");
-      static float s_accumulated_time = 0.0f;
-      static auto s_prev_time = std::chrono::high_resolution_clock::now();
-      auto current_time = std::chrono::high_resolution_clock::now();
-      float dt = std::chrono::duration<float>(current_time - s_prev_time).count();
-      s_prev_time = current_time;
-      if (!paused)
-        s_accumulated_time += dt;
-      UniformBufferObject ubo{
-          .model = glm::rotate(glm::mat4(1.0f), s_accumulated_time * glm::radians(90.0f), glm::vec3(0.0f, 0.0f, 1.0f)),
-          .view = glm::lookAt(glm::vec3(2.0f, 2.0f, 2.0f), glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(0.0f, 0.0f, 1.0f)),
-          .proj =
-          glm::perspective(glm::radians(45.0f),
-                           static_cast<float>(vk_swapchain_extent.width) / static_cast<float>(
-                             vk_swapchain_extent.height),
-                           0.1f,
-                           10.0f),
-      };
-      ubo.proj[1][1] *= -1;
-      MemoryCopy(vk_uniform_buffers_mapped[current_frame], &ubo, sizeof(ubo));
+      {
+        ZoneScopedN("UboUpdate");
+        static float s_accumulated_time = 0.0f;
+        static auto s_prev_time = std::chrono::high_resolution_clock::now();
+        auto current_time = std::chrono::high_resolution_clock::now();
+        float dt = std::chrono::duration<float>(current_time - s_prev_time).count();
+        s_prev_time = current_time;
+        if (!paused)
+          s_accumulated_time += dt;
+        UniformBufferObject ubo{
+            .model = glm::rotate(glm::mat4(1.0f),
+                                 s_accumulated_time * glm::radians(90.0f),
+                                 glm::vec3(0.0f, 0.0f, 1.0f)),
+            .view = glm::lookAt(glm::vec3(2.0f, 2.0f, 2.0f), glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(0.0f, 0.0f, 1.0f)),
+            .proj =
+            glm::perspective(glm::radians(45.0f),
+                             static_cast<float>(vk_swapchain_extent.width) / static_cast<float>(
+                               vk_swapchain_extent.height),
+                             0.1f,
+                             10.0f),
+        };
+        ubo.proj[1][1] *= -1;
+        MemoryCopy(vk_uniform_buffers_mapped[current_frame], &ubo, sizeof(ubo));
       }
 
       vk::PipelineStageFlags vk_wait_stage = vk::PipelineStageFlagBits::eColorAttachmentOutput;
@@ -833,49 +840,53 @@ int main() {
                                     .pCommandBuffers = &vk_cmd,
                                     .signalSemaphoreCount = 1,
                                     .pSignalSemaphores = &vk_sc->render_finished_sems[vk_image_index]};
-      { ZoneScopedN("Submit");
-      vk_abort_if_error(vk_graphics_queue.submit(1, &vk_submit_info, vk_in_flight_fences[current_frame]));
+      {
+        ZoneScopedN("Submit");
+        vk_abort_if_error(vk_graphics_queue.submit(1, &vk_submit_info, vk_in_flight_fences[current_frame]));
 
-      VkPresentInfoKHR vk_present_info{
-          .sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR,
-          .pNext = nullptr,
-          .waitSemaphoreCount = 1,
-          .pWaitSemaphores = reinterpret_cast<VkSemaphore const *>(&vk_sc->render_finished_sems[vk_image_index]),
-          .swapchainCount = 1,
-          .pSwapchains = reinterpret_cast<VkSwapchainKHR const *>(&vk_swapchain),
-          .pImageIndices = &vk_image_index,
-          .pResults = nullptr};
-      VkResult vk_present_res = vkQueuePresentKHR(vk_present_queue, &vk_present_info);
+        VkPresentInfoKHR vk_present_info{
+            .sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR,
+            .pNext = nullptr,
+            .waitSemaphoreCount = 1,
+            .pWaitSemaphores = reinterpret_cast<VkSemaphore const *>(&vk_sc->render_finished_sems[vk_image_index]),
+            .swapchainCount = 1,
+            .pSwapchains = reinterpret_cast<VkSwapchainKHR const *>(&vk_swapchain),
+            .pImageIndices = &vk_image_index,
+            .pResults = nullptr};
+        VkResult vk_present_res = vkQueuePresentKHR(vk_present_queue, &vk_present_info);
 
-      if (vk_present_res == VK_ERROR_OUT_OF_DATE_KHR || vk_present_res == VK_SUBOPTIMAL_KHR || window.
-          framebuffer_resized ||
-          swapchain_needs_rebuild) {
-        vk_pool_gen = (vk_pool_gen + 1) % SC_MAX_GENERATIONS;
-        vk_sc = &vk_swapchain_pool[vk_pool_gen];
-        vk_device_arena.offset = vk_swapchain_arena_checkpoint;
-        vk_recreate_swapchain(window.glfw_window,
-                              vk_device,
-                              vk_sc,
-                              vk_swapchain,
-                              vk_phys_dev,
-                              vk_surface,
-                              vk_swapchain_extent,
-                              vk_chosen_format,
-                              vk_chosen_color_space,
-                              vk_chosen_present_mode,
-                              &vk_depth_image,
-                              &vk_depth_image_view,
-                              vk_msaa_samples,
-                              &vk_device_arena);
-        imgui_set_min_image_count(vk_sc->image_count);
-        window.framebuffer_resized = false;
-      } else if (vk_present_res != VK_SUCCESS) {
-        std::fprintf(stderr, "vkQueuePresentKHR failed: %d\n", vk_present_res);
-        TRAP();
-      }
+        if (vk_present_res == VK_ERROR_OUT_OF_DATE_KHR || vk_present_res == VK_SUBOPTIMAL_KHR || window.
+            framebuffer_resized ||
+            swapchain_needs_rebuild) {
+          vk_pool_gen = (vk_pool_gen + 1) % SC_MAX_GENERATIONS;
+          vk_sc = &vk_swapchain_pool[vk_pool_gen];
+          vk_device_arena.offset = vk_swapchain_arena_checkpoint;
+          vk_recreate_swapchain(window.glfw_window,
+                                vk_device,
+                                vk_sc,
+                                vk_swapchain,
+                                vk_phys_dev,
+                                vk_surface,
+                                vk_swapchain_extent,
+                                vk_chosen_format,
+                                vk_chosen_color_space,
+                                vk_chosen_present_mode,
+                                &vk_depth_image,
+                                &vk_depth_image_view,
+                                vk_msaa_samples,
+                                &vk_device_arena);
+          imgui_set_min_image_count(vk_sc->image_count);
+          window.framebuffer_resized = false;
+        } else if (vk_present_res != VK_SUCCESS) {
+          std::fprintf(stderr, "vkQueuePresentKHR failed: %d\n", vk_present_res);
+          TRAP();
+        }
       }
       clock.mark_work_done();
-      { ZoneScopedN("FrameLimit"); clock.wait_for_target(); }
+      {
+        ZoneScopedN("FrameLimit");
+        clock.wait_for_target();
+      }
       FrameMark;
 
       absolute_frame_index++;

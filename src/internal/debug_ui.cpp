@@ -36,8 +36,17 @@ internal void debug_ui_palette_render(PaletteState *state) {
   ZoneScopedN("Palette");
   if (!state->open) return;
 
-  float h = ImGui::GetMainViewport()->Size.y * 0.25f;
-  if (h < 100) h = 100;
+  int visible_count = 0;
+  for (int i = 0; i < (int)state->actions.size; i++)
+    if (fuzzy_match(state->search, state->actions.data[i].name))
+      visible_count++;
+
+  float max_h = ImGui::GetMainViewport()->Size.y * 0.25f;
+  if (max_h < 100) max_h = 100;
+
+  float item_h = ImGui::GetTextLineHeight() + ImGui::GetStyle().ItemSpacing.y;
+  float content_h = ImGui::GetFrameHeightWithSpacing() + visible_count * item_h + ImGui::GetStyle().WindowPadding.y * 2;
+  float h = (content_h < max_h) ? content_h : max_h;
 
   ImGui::SetNextWindowPos(ImGui::GetMainViewport()->GetCenter(), ImGuiCond_Appearing, {0.5f, 0.5f});
   ImGui::SetNextWindowSize({state->width, h});
@@ -45,11 +54,6 @@ internal void debug_ui_palette_render(PaletteState *state) {
   ImGui::SetKeyboardFocusHere();
   ImGui::SetNextItemWidth(-FLT_MIN);
   ImGui::InputText("##s", state->search, sizeof(state->search));
-
-  int visible_count = 0;
-  for (int i = 0; i < (int)state->actions.size; i++)
-    if (fuzzy_match(state->search, state->actions.data[i].name))
-      visible_count++;
 
   if (visible_count && state->selected >= visible_count) state->selected = visible_count - 1;
   if (state->selected < 0) state->selected = 0;

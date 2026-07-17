@@ -2,20 +2,23 @@
 #include <ctime>
 #include "arena.hpp"
 
+internal AppWindow glfw_init_window(AppParams *app_params);
+
 internal String8 read_file(Arena *arena, String8 filename) {
-  std::string   string_filename = to_std_string(filename);
+  std::string string_filename = to_std_string(filename);
   std::ifstream file(string_filename, std::ios::ate | std::ios::binary);
   if (!file.is_open()) {
     ASSERT_ALWAYS((false && "Failed to open file"));
   }
 
   std::streampos const BUFFER_SIZE = file.tellg();
-  U8                  *buffer      = arena->push_array<U8>(file.tellg());
+  U8 *buffer = arena->push_array<U8>(file.tellg());
   file.seekg(0, std::ios::beg);
   file.read(reinterpret_cast<char *>(buffer), BUFFER_SIZE);
   file.close();
   return str8(buffer, BUFFER_SIZE);
 }
+
 internal F64 diff_ms(timespec const &a, timespec const &b) {
   return static_cast<F64>(b.tv_sec - a.tv_sec) * 1000.0 +
          static_cast<F64>(b.tv_nsec - a.tv_nsec) / 1e6;
@@ -23,9 +26,9 @@ internal F64 diff_ms(timespec const &a, timespec const &b) {
 
 struct FrameClock {
   timespec frame_start = {};
-  timespec work_end    = {};
-  timespec frame_end   = {};
-  F64      target_ms{};
+  timespec work_end = {};
+  timespec frame_end = {};
+  F64 target_ms{};
 
   void start() { clock_gettime(CLOCK_MONOTONIC, &frame_start); }
 
@@ -45,3 +48,6 @@ struct FrameClock {
   F64 work_ms() const { return diff_ms(frame_start, work_end); }
   F64 wait_ms() const { return total_ms() - work_ms(); }
 };
+
+constexpr U32 MAX_INSTANCE_EXTENSIONS = 16;
+internal U32 glfw_get_required_extensions(char const **out_extensions, U32 max_extensions);

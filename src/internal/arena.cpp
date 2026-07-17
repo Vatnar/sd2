@@ -90,6 +90,7 @@ U64 get_page_size() {
 
 
 Arena *arena_alloc(ArenaParams const params) {
+  ZoneScoped;
   U64 reserve_size = params.reserve_size;
   U64 commit_size  = params.commit_size;
 
@@ -288,6 +289,7 @@ void Arena::pop_to(U64 pos) {
 }
 
 void Arena::clear() {
+  ZoneScoped;
   this->pop_to(0);
 }
 

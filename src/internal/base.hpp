@@ -33,8 +33,8 @@ using F64 = double;
 #else
 #define ASSERT(x) (void)(x)
 #endif
-#define INVALID_PATH    ASSERT(!"Invalid Path!")
-#define NOT_IMPLEMENTED ASSERT(!"Not Implemented!")
+#define INVALID_PATH    ASSERT_ALWAYS(!"Invalid Path!")
+#define NOT_IMPLEMENTED ASSERT_ALWAYS(!"Not Implemented!")
 #define NO_OP           ((void)0)
 
 
@@ -173,7 +173,25 @@ void fill_array(Array<T, SIZE> &array, T value) {
   }
 }
 
-//~ DynArray, that uses an arena
+//~ DynArray
+template<typename T>
+struct DynArray {
+  T  *data;
+  U64 size;
+  U64 capacity;
+
+  constexpr U64 array_size() { return sizeof(T) * size; }
+  using value_type = T;
+  T &operator[](U64 idx) {
+    if (idx >= capacity) {
+      INVALID_PATH;
+    }
+    return data[idx];
+  }
+
+  operator T *() { return data; }
+  operator T const *() const { return data; }
+};
 
 //~ String8
 struct String8 {

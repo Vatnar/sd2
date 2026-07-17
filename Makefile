@@ -6,6 +6,7 @@ CXXFLAGS := -Wall -Wextra -std=c++26 -fno-exceptions -freflection -Wpedantic -mc
 BUILD_DIR := build
 SHADER_DIR := $(BUILD_DIR)/assets/shaders
 TEXTURE_DIR := $(BUILD_DIR)/assets/textures
+MODEL_DIR := $(BUILD_DIR)/assets/models
 TARGET := $(BUILD_DIR)/sd2
 DEPS := $(BUILD_DIR)/main.d
 
@@ -18,15 +19,22 @@ SLANG_FLAGS := -target spirv -profile spirv_1_4 -emit-spirv-directly \
 TEXTURE_SOURCES := $(wildcard assets/textures/*)
 TEXTURE_OUTPUTS := $(patsubst assets/textures/%,$(TEXTURE_DIR)/%,$(TEXTURE_SOURCES))
 
+MODEL_SOURCES := $(wildcard assets/models/*)
+MODEL_OUTPUTS := $(patsubst assets/models/%,$(MODEL_DIR)/%,$(MODEL_SOURCES))
+
 all: $(TARGET)
 
-$(TARGET): src/sd2_main.cpp $(SLANG_OUTPUTS) $(TEXTURE_OUTPUTS) | $(BUILD_DIR)
+$(TARGET): src/sd2_main.cpp $(SLANG_OUTPUTS) $(TEXTURE_OUTPUTS) $(MODEL_OUTPUTS) | $(BUILD_DIR)
 	$(CXX) $(CXXFLAGS) src/sd2_main.cpp -o $@ -lglfw -lvulkan
 
 $(SHADER_DIR)/%.spv: assets/shaders/%.slang | $(SHADER_DIR)
 	$(SLANGC) $< $(SLANG_FLAGS) -o $@
 
 $(TEXTURE_DIR)/%: assets/textures/%
+	mkdir -p $(@D)
+	cp $< $@
+
+$(MODEL_DIR)/%: assets/models/%
 	mkdir -p $(@D)
 	cp $< $@
 
@@ -37,6 +45,9 @@ $(SHADER_DIR):
 	mkdir -p $@
 
 $(TEXTURE_DIR):
+	mkdir -p $@
+
+$(MODEL_DIR):
 	mkdir -p $@
 
 run: $(TARGET)

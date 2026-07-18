@@ -3,9 +3,11 @@
 #include <imgui.h>
 
 static bool fuzzy_match(char const *query, char const *target) {
-  if (!query || !*query) return true;
+  if (!query || !*query)
+    return true;
   while (*target && *query) {
-    if ((*target | 0x20) == (*query | 0x20)) ++query;
+    if ((*target | 0x20) == (*query | 0x20))
+      ++query;
     ++target;
   }
   return !*query;
@@ -18,7 +20,8 @@ internal void debug_ui_palette_init(PaletteState *state, Arena *arena, DynArray<
   for (U64 i = 0; i < actions.size; i++) {
     state->actions.data[i] = actions.data[i];
     U64 len = strlen(actions.data[i].name);
-    if (len > max_len) max_len = len;
+    if (len > max_len)
+      max_len = len;
   }
   state->width = max_len * 8.0f + 60.0f;
 }
@@ -33,8 +36,8 @@ internal void debug_ui_palette_toggle(PaletteState *state) {
 }
 
 internal void debug_ui_palette_render(PaletteState *state) {
-  ZoneScopedN("Palette");
-  if (!state->open) return;
+  if (!state->open)
+    return;
 
   int visible_count = 0;
   for (int i = 0; i < (int)state->actions.size; i++)
@@ -42,7 +45,8 @@ internal void debug_ui_palette_render(PaletteState *state) {
       visible_count++;
 
   float max_h = ImGui::GetMainViewport()->Size.y * 0.25f;
-  if (max_h < 100) max_h = 100;
+  if (max_h < 100)
+    max_h = 100;
 
   float item_h = ImGui::GetTextLineHeight() + ImGui::GetStyle().ItemSpacing.y;
   float content_h = ImGui::GetFrameHeightWithSpacing() + visible_count * item_h + ImGui::GetStyle().WindowPadding.y * 2;
@@ -55,17 +59,22 @@ internal void debug_ui_palette_render(PaletteState *state) {
   ImGui::SetNextItemWidth(-FLT_MIN);
   ImGui::InputText("##s", state->search, sizeof(state->search));
 
-  if (visible_count && state->selected >= visible_count) state->selected = visible_count - 1;
-  if (state->selected < 0) state->selected = 0;
+  if (visible_count && state->selected >= visible_count)
+    state->selected = visible_count - 1;
+  if (state->selected < 0)
+    state->selected = 0;
 
-  if (ImGui::IsKeyPressed(ImGuiKey_UpArrow) && state->selected > 0) state->selected--;
-  if (ImGui::IsKeyPressed(ImGuiKey_DownArrow) && state->selected < visible_count - 1) state->selected++;
+  if (ImGui::IsKeyPressed(ImGuiKey_UpArrow) && state->selected > 0)
+    state->selected--;
+  if (ImGui::IsKeyPressed(ImGuiKey_DownArrow) && state->selected < visible_count - 1)
+    state->selected++;
 
   ImGui::PushStyleVar(ImGuiStyleVar_ScrollbarSize, 0);
   ImGui::BeginChild("##list", {0, 0});
   int vi = 0;
   for (int i = 0; i < (int)state->actions.size; i++) {
-    if (!fuzzy_match(state->search, state->actions.data[i].name)) continue;
+    if (!fuzzy_match(state->search, state->actions.data[i].name))
+      continue;
     if (vi == state->selected && vi != state->prev_selected)
       ImGui::SetScrollHereY();
     if (ImGui::Selectable(state->actions.data[i].name, vi == state->selected)) {
@@ -73,7 +82,8 @@ internal void debug_ui_palette_render(PaletteState *state) {
       state->open = false;
       state->search[0] = '\0';
     }
-    if (vi == state->selected) ImGui::SetItemDefaultFocus();
+    if (vi == state->selected)
+      ImGui::SetItemDefaultFocus();
     vi++;
   }
   ImGui::EndChild();
@@ -83,7 +93,8 @@ internal void debug_ui_palette_render(PaletteState *state) {
   if (ImGui::IsKeyPressed(ImGuiKey_Enter) && visible_count) {
     int vi = 0;
     for (int i = 0; i < (int)state->actions.size; i++) {
-      if (!fuzzy_match(state->search, state->actions.data[i].name)) continue;
+      if (!fuzzy_match(state->search, state->actions.data[i].name))
+        continue;
       if (vi == state->selected) {
         state->actions.data[i].fn(state->actions.data[i].ctx);
         state->open = false;
@@ -95,8 +106,10 @@ internal void debug_ui_palette_render(PaletteState *state) {
   }
 
   if (ImGui::IsKeyPressed(ImGuiKey_Escape)) {
-    if (state->search[0]) state->search[0] = '\0';
-    else state->open = false;
+    if (state->search[0])
+      state->search[0] = '\0';
+    else
+      state->open = false;
   }
   ImGui::End();
 }

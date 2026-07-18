@@ -6,17 +6,17 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
 option(IMGUI_TRACE_ALLOC "Trace imgui memory allocations" OFF)
-option(SD2_TRACY_ENABLE   "Enable Tracy instrumentation" OFF)
+option(SD2_TRACY_ENABLE "Enable Tracy instrumentation" OFF)
 
 add_compile_options(
         -Wall -Wextra -Wpedantic
         -Wno-unused-parameter -Wno-unused-variable
-        -fno-exceptions -freflection -mclflushopt -fno-omit-frame-pointer
+        -fno-exceptions -freflection -mclflushopt -fno-omit-frame-pointer -march=native -flto
 )
 
-if(IMGUI_TRACE_ALLOC)
-  add_compile_definitions(IMGUI_TRACE_ALLOC)
-endif()
+if (IMGUI_TRACE_ALLOC)
+    add_compile_definitions(IMGUI_TRACE_ALLOC)
+endif ()
 
 set(CPP_INCLUDE
         src/internal/arena.cpp
@@ -26,25 +26,19 @@ set(CPP_INCLUDE
 
 add_library(imgui STATIC vendor/imgui_lib.cpp)
 target_include_directories(imgui PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vendor
-                                          ${CMAKE_CURRENT_SOURCE_DIR}/vendor/imgui-1.92.8
-                                          ${CMAKE_CURRENT_SOURCE_DIR}/vendor/imgui-1.92.8/backends)
+        ${CMAKE_CURRENT_SOURCE_DIR}/vendor/imgui-1.92.8
+        ${CMAKE_CURRENT_SOURCE_DIR}/vendor/imgui-1.92.8/backends)
 target_compile_definitions(imgui PRIVATE IMGUI_DEFINE_MATH_OPERATORS)
 target_link_libraries(imgui PRIVATE glfw vulkan)
 
 add_executable(sd2 src/sd2_main.cpp ${CPP_INCLUDE})
 set_source_files_properties(${CPP_INCLUDE} PROPERTIES HEADER_FILE_ONLY TRUE)
 
-target_include_directories(sd2 PRIVATE vendor/tracy/public)
-if(SD2_TRACY_ENABLE)
-  target_compile_definitions(sd2 PRIVATE TRACY_ENABLE)
-  target_sources(sd2 PRIVATE vendor/tracy/public/TracyClient.cpp)
-endif()
-
 set(SHADER_SLANG_SOURCES assets/shaders/shader.slang)
 
 target_include_directories(sd2 PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/vendor
-                                       ${CMAKE_CURRENT_SOURCE_DIR}/vendor/imgui-1.92.8
-                                       ${CMAKE_CURRENT_SOURCE_DIR}/vendor/imgui-1.92.8/backends)
+        ${CMAKE_CURRENT_SOURCE_DIR}/vendor/imgui-1.92.8
+        ${CMAKE_CURRENT_SOURCE_DIR}/vendor/imgui-1.92.8/backends)
 target_link_libraries(sd2 PRIVATE glfw vulkan imgui)
 
 find_program(SLANGC_EXECUTABLE slangc REQUIRED)

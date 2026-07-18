@@ -4,10 +4,11 @@
 #include <thread>
 
 #include <sys/ioctl.h>
-#define SD2_DEBUG 1
+#include <filesystem>
+
+#define SD2_DEBUG 0
 #define TINYOBJLOADER_IMPLEMENTATION
 #define STB_IMAGE_IMPLEMENTATION
-#include <filesystem>
 
 #include "sd2_inc.hpp"
 
@@ -165,25 +166,6 @@ int main() {
                                                                 &vk_acquire_sems,
                                                                 &vk_command_buffers);
 
-
-#ifdef TRACY_ENABLE
-  TracyVkCtx g_tracy_vk_ctx = nullptr;
-  {
-    auto vk_tracy_cmds = vk_abort_if_error(vk_device.allocateCommandBuffers(
-        vk::CommandBufferAllocateInfo{.commandPool = vk_command_pool, .level = vk::CommandBufferLevel::ePrimary,
-                                      .commandBufferCount = 1}));
-    vk::CommandBuffer vk_tracy_cmd = vk_tracy_cmds[0];
-    g_tracy_vk_ctx = TracyVkContext(
-        static_cast<VkPhysicalDevice>(vk_phys_dev),
-        static_cast<VkDevice>(vk_device),
-        static_cast<VkQueue>(vk_graphics_queue),
-        static_cast<VkCommandBuffer>(vk_tracy_cmd));
-    vk_device.freeCommandBuffers(vk_command_pool, 1, &vk_tracy_cmd);
-  }
-#else
-  void *g_tracy_vk_ctx = nullptr;
-  (void)g_tracy_vk_ctx;
-#endif
 
   //~ Sampler
   vk::Sampler vk_sampler{};
@@ -565,11 +547,9 @@ int main() {
 
     FrameClock clock{.target_ms = target_frame_ms};
     while (!glfwWindowShouldClose(window.glfw_window)) {
-      ZoneScopedN("Frame");
       clock.start();
       frame_arena->clear();
       {
-        ZoneScopedN("Events");
         glfwPollEvents();
 
         if (!monitor_detected) {
@@ -653,13 +633,11 @@ int main() {
       }
 
       {
-        ZoneScopedN("ImGui");
         imgui_new_frame();
         debug_ui_palette_render(&palette_state);
       }
 
       // TODO: extract to render_frame(vk_device, ...) -> bool (swapchain_needs_rebuild)
-      ZoneNamedN(___tracy_gpu_sync, "GpuSync", true);
       vk_abort_if_error(vk_device.waitForFences(1, &vk_in_flight_fences[current_frame], VK_TRUE, UINT64_MAX));
 
       bool swapchain_needs_rebuild = false;
@@ -712,7 +690,6 @@ int main() {
       vk_abort_if_error(vk_cmd.begin({.flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit}));
 
       {
-        TracyVkZone(g_tracy_vk_ctx, static_cast<VkCommandBuffer>(vk_cmd), "Render Scene");
         vk_transition_image_layout(vk_cmd,
                                    vk_sc->msaa_images[vk_image_index],
                                    vk::ImageLayout::eUndefined,
@@ -788,11 +765,9 @@ int main() {
       } // TracyVkZone("Render Scene")
 
       {
-        TracyVkZone(g_tracy_vk_ctx, static_cast<VkCommandBuffer>(vk_cmd), "ImGui Pass");
         imgui_render(vk_cmd, vk_sc->image_views[vk_image_index], vk_swapchain_extent);
       } // TracyVkZone("ImGui Pass")
 
-      TracyVkCollect(g_tracy_vk_ctx, static_cast<VkCommandBuffer>(vk_cmd));
 
       vk_transition_image_layout(vk_cmd,
                                  vk_sc->images[vk_image_index],
@@ -808,7 +783,6 @@ int main() {
       vk_abort_if_error(vk_cmd.end());
 
       {
-        ZoneScopedN("UboUpdate");
         static float s_accumulated_time = 0.0f;
         static auto s_prev_time = std::chrono::high_resolution_clock::now();
         auto current_time = std::chrono::high_resolution_clock::now();
@@ -841,7 +815,6 @@ int main() {
                                     .signalSemaphoreCount = 1,
                                     .pSignalSemaphores = &vk_sc->render_finished_sems[vk_image_index]};
       {
-        ZoneScopedN("Submit");
         vk_abort_if_error(vk_graphics_queue.submit(1, &vk_submit_info, vk_in_flight_fences[current_frame]));
 
         VkPresentInfoKHR vk_present_info{
@@ -884,10 +857,8 @@ int main() {
       }
       clock.mark_work_done();
       {
-        ZoneScopedN("FrameLimit");
         clock.wait_for_target();
       }
-      FrameMark;
 
       absolute_frame_index++;
       current_frame = (current_frame + 1) % MAX_FRAMES_IN_FLIGHT;
@@ -899,9 +870,6 @@ int main() {
   {
     vk_abort_if_error(vk_device.waitIdle());
     imgui_shutdown();
-#ifdef TRACY_ENABLE
-    TracyVkDestroy(g_tracy_vk_ctx);
-#endif
 
     vk_abort_if_error(vk_device.freeDescriptorSets(vk_descriptor_pool, vk_descriptor_sets.size(), vk_descriptor_sets));
     vk_device.destroyDescriptorPool(vk_descriptor_pool);

@@ -4,7 +4,6 @@
 #include "../sd2_inc.hpp"
 
 internal VKInstanceResult vk_create_vulkan_instance(GLFWwindow *glfw_window, Arena *arena) {
-  ZoneScoped;
   VKInstanceResult res{};
 
   res.get_instance_proc_addr =
@@ -121,7 +120,6 @@ internal void vk_abort_if_error(vk::Result res, std::string_view message) {
 
 
 internal VKQueueFamilyIndices vk_find_queue_families(vk::PhysicalDevice device, vk::SurfaceKHR surface) {
-  ZoneScoped;
   Temp scratch = scratch_begin(0, 0);
   VKQueueFamilyIndices indices{};
 
@@ -189,7 +187,6 @@ vk_query_swapchain_support(vk::PhysicalDevice device, vk::SurfaceKHR surface, Ar
 
 
 internal VKRatedDevice vk_pick_best_physical_device(vk::Instance instance, vk::SurfaceKHR surface) {
-  ZoneScoped;
   Temp scratch = scratch_begin(0, 0);
   U32 device_count = 0;
   vk_abort_if_error(instance.enumeratePhysicalDevices(&device_count, nullptr));
@@ -430,7 +427,6 @@ internal void vk_transition_image_layout(vk::CommandBuffer command_buffer,
                                          vk::ImageAspectFlags aspect_flags,
                                          U32 mip_levels,
                                          U32 base_mip_level) {
-  ZoneScoped;
   vk::ImageMemoryBarrier2 barrier{
       .srcStageMask = src_stage_mask,
       .srcAccessMask = src_access_mask,
@@ -535,8 +531,7 @@ internal void vk_recreate_swapchain(GLFWwindow *glfw_window,
                                     vk::Image *depth_image,
                                     vk::ImageView *depth_image_view,
                                     vk::SampleCountFlagBits msaa_samples,
-                                     VKGpuArena *device_arena) {
-  ZoneScoped;
+                                    VKGpuArena *device_arena) {
   S32 width = 0, height = 0;
   glfwGetFramebufferSize(glfw_window, &width, &height);
   while (width == 0 || height == 0) {
@@ -739,7 +734,6 @@ internal vk::SampleCountFlagBits vk_get_max_usable_sample_count(vk::PhysicalDevi
 
 internal std::tuple<vk::Device, vk::Queue, vk::Queue>
 vk_create_logical_device(vk::PhysicalDevice phys_dev, VKQueueFamilyIndices queue_indices) {
-  ZoneScoped;
   float queue_priority = 1.0f;
   Array<vk::DeviceQueueCreateInfo, 2> queue_infos{};
   U32 queue_info_count = 0;
@@ -819,8 +813,7 @@ internal vk::SwapchainKHR vk_create_swapchain(vk::PhysicalDevice vk_phys_dev,
                                               vk::ColorSpaceKHR chosen_color_space,
                                               vk::Extent2D swapchain_extent,
                                               vk::PresentModeKHR chosen_present_mode,
-                                               VKQueueFamilyIndices queue_indices) {
-  ZoneScoped;
+                                              VKQueueFamilyIndices queue_indices) {
   vk::SurfaceCapabilitiesKHR capabilities{};
   vk_abort_if_error(vk_phys_dev.getSurfaceCapabilitiesKHR(vk_surface, &capabilities));
   U32 desired_image_count = capabilities.minImageCount + 1;
@@ -868,8 +861,7 @@ vk_create_swapchain_resources(vk::Device vk_device,
                               Array<SwapchainResources, SC_MAX_GENERATIONS> *swapchain_pool,
                               Array<vk::Fence, MAX_FRAMES_IN_FLIGHT> *in_flight_fences,
                               Array<vk::Semaphore, MAX_FRAMES_IN_FLIGHT> *acquire_sems,
-                               Array<vk::CommandBuffer, MAX_FRAMES_IN_FLIGHT> *command_buffers) {
-  ZoneScoped;
+                              Array<vk::CommandBuffer, MAX_FRAMES_IN_FLIGHT> *command_buffers) {
   SwapchainResources *sc = &*swapchain_pool[0];
   vk_abort_if_error(vk_device.getSwapchainImagesKHR(swapchain, &sc->image_count, nullptr));
   vk_abort_if_error(vk_device.getSwapchainImagesKHR(swapchain, &sc->image_count, sc->images));
@@ -938,7 +930,7 @@ vk_load_texture(vk::PhysicalDevice vk_phys_dev,
                 vk::Queue graphics_queue,
                 char const *texture_path) {
   VKTextureImage tex{};
-  U32 tex_width, tex_height, tex_channels;
+  U32 tex_width{}, tex_height{}, tex_channels{};
   stbi_uc *pixels = stbi_load(texture_path,
                               reinterpret_cast<int *>(&tex_width),
                               reinterpret_cast<int *>(&tex_height),

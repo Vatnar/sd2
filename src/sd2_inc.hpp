@@ -18,10 +18,6 @@
 #define GLM_ENABLE_EXPERIMENTAL
 #include <glm/gtx/hash.hpp>
 
-// tracy
-#include <tracy/Tracy.hpp>
-#include <tracy/TracyVulkan.hpp>
-
 // stb
 #include <stb/stb_image.h>
 

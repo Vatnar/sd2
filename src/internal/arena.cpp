@@ -35,6 +35,7 @@ void *reserve_memory(U64 size) {
   }
   return result;
 }
+
 void *reserve_memory_large(U64 size) {
   void *result = mmap(nullptr, size, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_HUGETLB, -1, 0);
   if (result == MAP_FAILED) {
@@ -62,7 +63,7 @@ U64 get_large_page_size() {
   }
 
   char label[64]{};
-  U64  value{};
+  U64 value{};
   char unit[16]{};
   bool found = false;
 
@@ -90,21 +91,20 @@ U64 get_page_size() {
 
 
 Arena *arena_alloc(ArenaParams const params) {
-  ZoneScoped;
   U64 reserve_size = params.reserve_size;
-  U64 commit_size  = params.commit_size;
+  U64 commit_size = params.commit_size;
 
   local_persist U64 large_page_size = get_large_page_size();
-  local_persist U64 page_size       = get_page_size();
+  local_persist U64 page_size = get_page_size();
 
   void *base = params.optional_backing_buffer;
   if (base == nullptr) {
     if (any(params.flags & ArenaFlags::LARGE_PAGES)) {
       reserve_size = align_pow2(reserve_size, large_page_size);
-      commit_size  = align_pow2(commit_size, large_page_size);
+      commit_size = align_pow2(commit_size, large_page_size);
     } else {
       reserve_size = align_pow2(reserve_size, page_size);
-      commit_size  = align_pow2(commit_size, page_size);
+      commit_size = align_pow2(commit_size, page_size);
     }
     ASSERT_ALWAYS(reserve_size >= sizeof(Arena));
     ASSERT_ALWAYS(commit_size >= sizeof(Arena));
@@ -126,7 +126,7 @@ Arena *arena_alloc(ArenaParams const params) {
     ASSERT_ALWAYS(params.commit_size <= params.reserve_size);
     ASSERT_ALWAYS(commit_size >= sizeof(Arena));
     ASSERT_ALWAYS(params.optional_backing_buffer == nullptr ||
-                  any(params.flags & ArenaFlags::NO_CHAIN));
+        any(params.flags & ArenaFlags::NO_CHAIN));
     AsanPoisonMemoryRegion(base, params.reserve_size);
   }
 
@@ -135,18 +135,18 @@ Arena *arena_alloc(ArenaParams const params) {
   }
 
   AsanUnpoisonMemoryRegion(base, sizeof(Arena));
-  Arena *arena         = static_cast<Arena *>(base);
-  arena->current       = arena;
-  arena->flags         = params.flags;
-  arena->commit_size   = commit_size;
-  arena->reserve_size  = reserve_size;
+  Arena *arena = static_cast<Arena *>(base);
+  arena->current = arena;
+  arena->flags = params.flags;
+  arena->commit_size = commit_size;
+  arena->reserve_size = reserve_size;
   arena->base_position = 0;
-  arena->position      = sizeof(Arena);
-  arena->committed     = commit_size;
-  arena->reserved      = reserve_size;
-  arena->owns_memory   = (params.optional_backing_buffer == nullptr);
-  arena->location      = params.location;
-  arena->name          = params.name;
+  arena->position = sizeof(Arena);
+  arena->committed = commit_size;
+  arena->reserved = reserve_size;
+  arena->owns_memory = (params.optional_backing_buffer == nullptr);
+  arena->location = params.location;
+  arena->name = params.name;
 
   // TODO: arenatable debug
   return arena;
@@ -169,9 +169,9 @@ void *Arena::push(U64 size, U64 align, bool zero) {
   // zero-size is allowed: returns current aligned position without advancing
   ASSERT_ALWAYS(align != 0);
   ASSERT_ALWAYS(std::has_single_bit(align));
-  Arena *current  = this->current;
-  U64    pos_pre  = 0;
-  U64    pos_post = 0;
+  Arena *current = this->current;
+  U64 pos_pre = 0;
+  U64 pos_post = 0;
   ASSERT_ALWAYS(checked_align_pow2_u64(current->position, align, &pos_pre));
   ASSERT_ALWAYS(checked_add_u64(pos_pre, size, &pos_post));
 
@@ -186,9 +186,9 @@ void *Arena::push(U64 size, U64 align, bool zero) {
     // TODO: free-list optional thing
 
     if (new_block == nullptr) {
-      U64 res_size          = current->reserve_size;
-      U64 commit_size       = current->commit_size;
-      U64 min_block_size    = 0;
+      U64 res_size = current->reserve_size;
+      U64 commit_size = current->commit_size;
+      U64 min_block_size = 0;
       U64 block_granularity = current->commit_size;
 
       ASSERT_ALWAYS(std::has_single_bit(block_granularity));
@@ -200,11 +200,11 @@ void *Arena::push(U64 size, U64 align, bool zero) {
       }
 
       new_block = arena_alloc({
-          .flags        = current->flags,
+          .flags = current->flags,
           .reserve_size = res_size,
-          .commit_size  = commit_size,
-          .location     = current->location,
-          .name         = current->name,
+          .commit_size = commit_size,
+          .location = current->location,
+          .name = current->name,
       });
 
       size_to_zero = 0;
@@ -247,7 +247,7 @@ void *Arena::push(U64 size, U64 align, bool zero) {
 
   void *result = nullptr;
   if (current->committed >= pos_post) {
-    result            = reinterpret_cast<U8 *>(current) + pos_pre;
+    result = reinterpret_cast<U8 *>(current) + pos_pre;
     current->position = pos_post;
     AsanUnpoisonMemoryRegion(result, size);
     MemoryZero(result, size_to_zero);
@@ -263,8 +263,9 @@ U64 Arena::pos() {
   U64 pos = current->base_position + current->position;
   return pos;
 }
+
 void Arena::pop_to(U64 pos) {
-  U64    target  = max<U64>(sizeof(Arena), pos);
+  U64 target = max<U64>(sizeof(Arena), pos);
   Arena *current = this->current;
 
 #if ARENA_FREE_LIST
@@ -289,7 +290,6 @@ void Arena::pop_to(U64 pos) {
 }
 
 void Arena::clear() {
-  ZoneScoped;
   this->pop_to(0);
 }
 
@@ -306,6 +306,7 @@ Temp Arena::temp_begin() {
   Temp temp = {this, this->pos()};
   return temp;
 }
+
 TempScope Arena::temp_scope() {
   return TempScope{this->temp_begin()};
 }
@@ -316,6 +317,6 @@ void Temp::end() {
   this->arena->pop_to(this->pos);
 #if SD2_DEBUG
   this->arena = nullptr;
-  this->pos   = 0;
+  this->pos = 0;
 #endif
 }

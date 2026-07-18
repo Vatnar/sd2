@@ -787,7 +787,7 @@ vk_create_swapchain_config(vk::PhysicalDevice dev, vk::SurfaceKHR surface, U32 w
     chosen_format = formats[0].format;
     chosen_color_space = formats[0].colorSpace;
   }
-  vk::PresentModeKHR chosen_present_mode = vk::PresentModeKHR::eImmediate;
+  vk::PresentModeKHR chosen_present_mode = vk::PresentModeKHR::eMailbox;
   bool mode_found = false;
   for (U32 i = 0; i < mode_count; ++i) {
     if (present_modes[i] == chosen_present_mode) {

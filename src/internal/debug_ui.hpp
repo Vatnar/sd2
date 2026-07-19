@@ -2,8 +2,7 @@
 
 struct PaletteAction {
   char const *name;
-  void (*fn)(void *ctx);
-  void *ctx;
+  void (*fn)();
 };
 
 struct PaletteState {

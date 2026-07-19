@@ -51,3 +51,6 @@ struct FrameClock {
 
 constexpr U32 MAX_INSTANCE_EXTENSIONS = 16;
 internal U32 glfw_get_required_extensions(char const **out_extensions, U32 max_extensions);
+
+internal void handle_key_input(Key *input);
+internal void handle_mouse_input(Mouse *mouse);

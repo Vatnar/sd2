@@ -16,6 +16,14 @@ VULKAN_HPP_DEFAULT_DISPATCH_LOADER_DYNAMIC_STORAGE
 
 static vk::detail::DynamicLoader g_vulkan_dynamic_loader{};
 
+
+struct PalCtx {
+  bool *paused;
+  AppWindow *window;
+};
+
+static PalCtx g_pal_ctx{};
+
 struct Vertex {
   glm::vec3 pos;
   glm::vec3 color;
@@ -203,71 +211,63 @@ int main() {
 
   imgui_setup_theme();
 
-  struct PalCtx {
-    bool *paused;
-    GLFWwindow *glfw_window;
-  } pal_ctx{&paused, window.glfw_window};
+
+  g_pal_ctx.paused = &paused;
+  g_pal_ctx.window = &window;
 
   DynArray<PaletteAction> pa{};
-  pa.size = pa.capacity = 11;
-  pa.data = app_arena->push_array<PaletteAction>(11);
-  pa.data[0] = {"Open File", [](void *) { puts("[palette] Open File"); }, nullptr};
-  pa.data[1] = {"Save", [](void *) { puts("[palette] Save"); }, nullptr};
-  pa.data[2] = {"Save All", [](void *) { puts("[palette] Save All"); }, nullptr};
-  pa.data[3] = {"Run", [](void *) { puts("[palette] Run"); }, nullptr};
-  pa.data[4] = {"Debug", [](void *) { puts("[palette] Debug"); }, nullptr};
-  pa.data[5] = {"Build", [](void *) { puts("[palette] Build"); }, nullptr};
-  pa.data[6] = {"Toggle Fullscreen", [](void *c) {
-                  auto *p = (PalCtx *)c;
-                  auto *w = (AppWindow *)glfwGetWindowUserPointer(p->glfw_window);
-                  if (!w->fullscreen) {
-                    glfwGetWindowPos(p->glfw_window, &w->windowed_x, &w->windowed_y);
-                    glfwGetWindowSize(p->glfw_window, &w->windowed_w, &w->windowed_h);
-                    int cx = w->windowed_x + w->windowed_w / 2;
-                    int cy = w->windowed_y + w->windowed_h / 2;
-                    int count;
-                    GLFWmonitor **monitors = glfwGetMonitors(&count);
-                    GLFWmonitor *monitor = glfwGetPrimaryMonitor();
-                    for (int i = 0; i < count; i++) {
-                      int mx, my;
-                      glfwGetMonitorPos(monitors[i], &mx, &my);
-                      GLFWvidmode const *mode = glfwGetVideoMode(monitors[i]);
-                      if (cx >= mx && cx < mx + (int)mode->width &&
-                          cy >= my && cy < my + (int)mode->height) {
-                        monitor = monitors[i];
-                        break;
-                      }
-                    }
-                    int mx, my;
-                    glfwGetMonitorPos(monitor, &mx, &my);
-                    GLFWvidmode const *mode = glfwGetVideoMode(monitor);
-                    glfwSetWindowAttrib(p->glfw_window, GLFW_DECORATED, GLFW_FALSE);
-                    glfwSetWindowPos(p->glfw_window, mx, my);
-                    glfwSetWindowSize(p->glfw_window, mode->width, mode->height);
-                  } else {
-                    glfwSetWindowAttrib(p->glfw_window, GLFW_DECORATED, GLFW_TRUE);
-                    glfwSetWindowPos(p->glfw_window, w->windowed_x, w->windowed_y);
-                    glfwSetWindowSize(p->glfw_window, w->windowed_w, w->windowed_h);
-                  }
-                  w->fullscreen = !w->fullscreen;
-                },
-                &pal_ctx};
-  pa.data[7] = {"Toggle Pause", [](void *c) {
-                  auto *p = (PalCtx *)c;
-                  *p->paused = !*p->paused;
-                },
-                &pal_ctx};
-  pa.data[8] = {"Show FPS", [](void *) { puts("[palette] Show FPS"); }, nullptr};
-  pa.data[9] = {"Quit", [](void *c) {
-                  auto *p = (PalCtx *)c;
-                  glfwSetWindowShouldClose(p->glfw_window, true);
-                },
-                &pal_ctx};
-  pa.data[10] = {"Exit", [](void *c) {
-                   auto *p = (PalCtx *)c;
-                   glfwSetWindowShouldClose(p->glfw_window, true);
-                 },
-                 &pal_ctx};
+  pa.size = pa.capacity = 5;
+  pa.data = app_arena->push_array<PaletteAction>(5);
+  pa.data[0] = {"Toggle Fullscreen", [] {
+    auto *w = g_pal_ctx.window;
+    GLFWwindow *glfw_window = g_pal_ctx.window->glfw_window;
+    if (!w->fullscreen) {
+      glfwGetWindowPos(glfw_window, &w->windowed_x, &w->windowed_y);
+      glfwGetWindowSize(glfw_window, &w->windowed_w, &w->windowed_h);
+      int cx = w->windowed_x + w->windowed_w / 2;
+      int cy = w->windowed_y + w->windowed_h / 2;
+      int count;
+      GLFWmonitor **monitors = glfwGetMonitors(&count);
+      GLFWmonitor *monitor = glfwGetPrimaryMonitor();
+      for (int i = 0; i < count; i++) {
+        int mx, my;
+        glfwGetMonitorPos(monitors[i], &mx, &my);
+        GLFWvidmode const *mode = glfwGetVideoMode(monitors[i]);
+        if (cx >= mx && cx < mx + static_cast<int>(mode->width) &&
+            cy >= my && cy < my + static_cast<int>(mode->height)) {
+          monitor = monitors[i];
+          break;
+        }
+      }
+      int mx, my;
+      glfwGetMonitorPos(monitor, &mx, &my);
+      GLFWvidmode const *mode = glfwGetVideoMode(monitor);
+      glfwSetWindowAttrib(glfw_window, GLFW_DECORATED, GLFW_FALSE);
+      glfwSetWindowPos(glfw_window, mx, my);
+      glfwSetWindowSize(glfw_window, mode->width, mode->height);
+    } else {
+      glfwSetWindowAttrib(glfw_window, GLFW_DECORATED, GLFW_TRUE);
+      glfwSetWindowPos(glfw_window, w->windowed_x, w->windowed_y);
+      glfwSetWindowSize(glfw_window, w->windowed_w, w->windowed_h);
+    }
+    w->fullscreen = !w->fullscreen;
+  }};
+  pa.data[1] = {"Toggle Pause", [] {
+                  *g_pal_ctx.paused = !*g_pal_ctx.paused;
+                }
+  };
+  pa.data[2] = {"Quit", [] {
+                  glfwSetWindowShouldClose(g_pal_ctx.window->glfw_window, true);
+                }
+  };
+  pa.data[3] = {"Exit", [] {
+                  glfwSetWindowShouldClose(g_pal_ctx.window->glfw_window, true);
+                }
+  };
+  pa.data[4] = {.name = "Print cursor pos", .fn = [] {
+    Vec2 pos = g_pal_ctx.window->mouse.pos;
+    printf("Mouse pos: %lf, %lf\n", pos.x, pos.y);;
+  }};
   debug_ui_palette_init(&palette_state, app_arena, pa);
 
   // TODO: extract to create_pipeline(device, format, render_format, extent, arena) -> {pipeline, layout, module,
@@ -544,93 +544,76 @@ int main() {
     vk::ClearValue vk_clear_depth = {
         .depthStencil = {.depth = 1.0, .stencil = 0}
     };
+    //~ input init
+
 
     FrameClock clock{.target_ms = target_frame_ms};
     while (!glfwWindowShouldClose(window.glfw_window)) {
+      F32 move_up = 0.0f;
+      F32 move_right = 0.0f;
+      F32 move_forward = 0.0f;
+      F32 key_speed = 0.1f;
       clock.start();
       frame_arena->clear();
+      glfwPollEvents();
+
+      //~ Input
       {
-        glfwPollEvents();
-
-        if (!monitor_detected) {
-          int wx, wy, ww, wh;
-          glfwGetWindowPos(window.glfw_window, &wx, &wy);
-          glfwGetWindowSize(window.glfw_window, &ww, &wh);
-          int win_cx = wx + ww / 2;
-          int win_cy = wy + wh / 2;
-
-          U32 monitor_hz = 60;
-          int count;
-          GLFWmonitor **monitors = glfwGetMonitors(&count);
-          for (int i = 0; i < count; i++) {
-            int mx, my;
-            glfwGetMonitorPos(monitors[i], &mx, &my);
-            GLFWvidmode const *mode = glfwGetVideoMode(monitors[i]);
-            if (win_cx >= mx && win_cx < mx + static_cast<int>(mode->width) && win_cy >= my &&
-                win_cy < my + static_cast<int>(mode->height)) {
-              monitor_hz = mode->refreshRate > 0 ? mode->refreshRate : 60;
-              break;
-            }
-          }
-          target_frame_ms = 1000.0 / monitor_hz;
-          clock.target_ms = target_frame_ms;
-          printf("Monitor: %u Hz (target: %.3f ms/frame)\n", monitor_hz, target_frame_ms);
-          monitor_detected = true;
-        }
-
-        WindowEvent event{};
-        while (window.events.pop(event)) {
-          switch (event.type) {
-              using enum WindowEventType;
-            case NONE: {
-              break;
-            }
-            case RESIZE: {
-              window.framebuffer_resized = true;
-              break;
-            }
-            case KEY: {
-              WKeyEvent &key = event.key;
-              if (key.key == GLFW_KEY_P && key.action == GLFW_PRESS && (key.mods & GLFW_MOD_CONTROL))
-                debug_ui_palette_toggle(&palette_state);
-              break;
-            }
-            case SCROLL: {
-              break;
-            }
-            case CURSOR: {
-              break;
-            }
-            case MBUTTON: {
-              WMButtonEvent &mbutton = event.mbutton;
-              switch (mbutton.button) {
-                default: {
-                  break;
-                }
-                case 0: {
-                  break;
-                }
-                case 1: {
-                  break;
-                }
-                case 2: {
-                  break;
-                }
-              }
-              break;
-            }
-            case CLOSE: {
-              break;
-            }
-            case REFRESH: {
-              break;
-            }
-            case TEXT: {
-              break;
-            }
-          }
-        }
+        handle_key_input(&window.key);
+        handle_mouse_input(&window.mouse);
       }
+      if ((window.key.held[GLFW_KEY_LEFT_CONTROL] || window.key.pressed[GLFW_KEY_LEFT_CONTROL]) && window.key.pressed[
+            GLFW_KEY_P]) {
+        debug_ui_palette_toggle(&palette_state);
+      }
+
+      if (!palette_state.open) {
+        if (window.key.pressed[GLFW_KEY_SPACE] || window.key.held[GLFW_KEY_SPACE])
+          move_up += 1.0f * key_speed;
+        if (window.key.pressed[GLFW_KEY_LEFT_SHIFT] || window.key.held[GLFW_KEY_LEFT_SHIFT])
+          move_up -= 1.0f * key_speed;
+
+        if (window.key.pressed[GLFW_KEY_W] || window.key.held[GLFW_KEY_W])
+          move_forward += 1.0f * key_speed;
+        if (window.key.pressed[GLFW_KEY_S] || window.key.held[GLFW_KEY_S])
+          move_forward -= 1.0f * key_speed;
+
+        if (window.key.pressed[GLFW_KEY_D] || window.key.held[GLFW_KEY_D])
+          move_right += 1.0f * key_speed;
+        if (window.key.pressed[GLFW_KEY_A] || window.key.held[GLFW_KEY_A])
+          move_right -= 1.0f * key_speed;
+      }
+
+      if (!monitor_detected) {
+        int wx, wy, ww, wh;
+        glfwGetWindowPos(window.glfw_window, &wx, &wy);
+        glfwGetWindowSize(window.glfw_window, &ww, &wh);
+        int win_cx = wx + ww / 2;
+        int win_cy = wy + wh / 2;
+
+        U32 monitor_hz = 60;
+        int count;
+        GLFWmonitor **monitors = glfwGetMonitors(&count);
+        for (int i = 0; i < count; i++) {
+          int mx, my;
+          glfwGetMonitorPos(monitors[i], &mx, &my);
+          GLFWvidmode const *mode = glfwGetVideoMode(monitors[i]);
+          if (win_cx >= mx && win_cx < mx + static_cast<int>(mode->width) && win_cy >= my &&
+              win_cy < my + static_cast<int>(mode->height)) {
+            monitor_hz = mode->refreshRate > 0 ? mode->refreshRate : 60;
+            break;
+          }
+        }
+        target_frame_ms = 1000.0 / monitor_hz;
+        clock.target_ms = target_frame_ms;
+        printf("Monitor: %u Hz (target: %.3f ms/frame)\n", monitor_hz, target_frame_ms);
+        monitor_detected = true;
+      }
+
+      // TODO: For input events like movement we rather wanna query the input instead of handling the event callback. Callback should be more for one off things really.
+
+      // TODO: trigger palette with ctrl p by defaulrt
+      // TODO: m,ovement
 
       {
         imgui_new_frame();
@@ -679,7 +662,8 @@ int main() {
       }
       {
         if (vk_sc->images_in_flight[vk_image_index]) {
-          vk_abort_if_error(vk_device.waitForFences(1, &vk_sc->images_in_flight[vk_image_index], VK_TRUE, UINT64_MAX));
+          vk_abort_if_error(
+              vk_device.waitForFences(1, &vk_sc->images_in_flight[vk_image_index], VK_TRUE, UINT64_MAX));
         }
       }
       vk_sc->images_in_flight[vk_image_index] = vk_in_flight_fences[current_frame];
@@ -689,84 +673,80 @@ int main() {
       vk_abort_if_error(vk_cmd.reset());
       vk_abort_if_error(vk_cmd.begin({.flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit}));
 
-      {
-        vk_transition_image_layout(vk_cmd,
-                                   vk_sc->msaa_images[vk_image_index],
-                                   vk::ImageLayout::eUndefined,
-                                   vk::ImageLayout::eColorAttachmentOptimal,
-                                   {},
-                                   vk::AccessFlagBits2::eColorAttachmentWrite,
-                                   vk::PipelineStageFlagBits2::eColorAttachmentOutput,
-                                   vk::PipelineStageFlagBits2::eColorAttachmentOutput,
-                                   vk::ImageAspectFlagBits::eColor,
-                                   1);
-        vk_transition_image_layout(vk_cmd,
-                                   vk_sc->images[vk_image_index],
-                                   vk::ImageLayout::eUndefined,
-                                   vk::ImageLayout::eColorAttachmentOptimal,
-                                   {},
-                                   vk::AccessFlagBits2::eColorAttachmentWrite,
-                                   vk::PipelineStageFlagBits2::eColorAttachmentOutput,
-                                   vk::PipelineStageFlagBits2::eColorAttachmentOutput,
-                                   vk::ImageAspectFlagBits::eColor,
-                                   1);
-        vk_transition_image_layout(
-            vk_cmd,
-            vk_depth_image,
-            vk::ImageLayout::eUndefined,
-            vk::ImageLayout::eDepthAttachmentOptimal,
-            vk::AccessFlagBits2::eDepthStencilAttachmentWrite,
-            vk::AccessFlagBits2::eDepthStencilAttachmentWrite,
-            vk::PipelineStageFlagBits2::eEarlyFragmentTests | vk::PipelineStageFlagBits2::eLateFragmentTests,
-            vk::PipelineStageFlagBits2::eEarlyFragmentTests | vk::PipelineStageFlagBits2::eLateFragmentTests,
-            vk::ImageAspectFlagBits::eDepth,
-            1);
+      vk_transition_image_layout(vk_cmd,
+                                 vk_sc->msaa_images[vk_image_index],
+                                 vk::ImageLayout::eUndefined,
+                                 vk::ImageLayout::eColorAttachmentOptimal,
+                                 {},
+                                 vk::AccessFlagBits2::eColorAttachmentWrite,
+                                 vk::PipelineStageFlagBits2::eColorAttachmentOutput,
+                                 vk::PipelineStageFlagBits2::eColorAttachmentOutput,
+                                 vk::ImageAspectFlagBits::eColor,
+                                 1);
+      vk_transition_image_layout(vk_cmd,
+                                 vk_sc->images[vk_image_index],
+                                 vk::ImageLayout::eUndefined,
+                                 vk::ImageLayout::eColorAttachmentOptimal,
+                                 {},
+                                 vk::AccessFlagBits2::eColorAttachmentWrite,
+                                 vk::PipelineStageFlagBits2::eColorAttachmentOutput,
+                                 vk::PipelineStageFlagBits2::eColorAttachmentOutput,
+                                 vk::ImageAspectFlagBits::eColor,
+                                 1);
+      vk_transition_image_layout(
+          vk_cmd,
+          vk_depth_image,
+          vk::ImageLayout::eUndefined,
+          vk::ImageLayout::eDepthAttachmentOptimal,
+          vk::AccessFlagBits2::eDepthStencilAttachmentWrite,
+          vk::AccessFlagBits2::eDepthStencilAttachmentWrite,
+          vk::PipelineStageFlagBits2::eEarlyFragmentTests | vk::PipelineStageFlagBits2::eLateFragmentTests,
+          vk::PipelineStageFlagBits2::eEarlyFragmentTests | vk::PipelineStageFlagBits2::eLateFragmentTests,
+          vk::ImageAspectFlagBits::eDepth,
+          1);
 
-        vk::RenderingAttachmentInfo vk_color_attachment{.imageView = vk_sc->msaa_image_views[vk_image_index],
-                                                        .imageLayout = vk::ImageLayout::eAttachmentOptimal,
-                                                        .resolveMode = vk::ResolveModeFlagBits::eAverage,
-                                                        .resolveImageView = vk_sc->image_views[vk_image_index],
-                                                        .resolveImageLayout = vk::ImageLayout::eAttachmentOptimal,
-                                                        .loadOp = vk::AttachmentLoadOp::eClear,
-                                                        .storeOp = vk::AttachmentStoreOp::eDontCare,
-                                                        .clearValue = {vk_clear_color}};
-        vk::RenderingAttachmentInfo vk_depth_attachment = {.imageView = vk_depth_image_view,
-                                                           .imageLayout = vk::ImageLayout::eDepthAttachmentOptimal,
-                                                           .loadOp = vk::AttachmentLoadOp::eClear,
-                                                           .storeOp = vk::AttachmentStoreOp::eDontCare,
-                                                           .clearValue = vk_clear_depth};
-        vk::RenderingInfo vk_rendering_info{
-            .renderArea = vk::Rect2D{{0, 0}, vk_swapchain_extent},
-            .layerCount = 1,
-            .colorAttachmentCount = 1,
-            .pColorAttachments = &vk_color_attachment,
-            .pDepthAttachment = &vk_depth_attachment
-        };
-        vk_cmd.beginRendering(vk_rendering_info);
+      vk::RenderingAttachmentInfo vk_color_attachment{.imageView = vk_sc->msaa_image_views[vk_image_index],
+                                                      .imageLayout = vk::ImageLayout::eAttachmentOptimal,
+                                                      .resolveMode = vk::ResolveModeFlagBits::eAverage,
+                                                      .resolveImageView = vk_sc->image_views[vk_image_index],
+                                                      .resolveImageLayout = vk::ImageLayout::eAttachmentOptimal,
+                                                      .loadOp = vk::AttachmentLoadOp::eClear,
+                                                      .storeOp = vk::AttachmentStoreOp::eDontCare,
+                                                      .clearValue = {vk_clear_color}};
+      vk::RenderingAttachmentInfo vk_depth_attachment = {.imageView = vk_depth_image_view,
+                                                         .imageLayout = vk::ImageLayout::eDepthAttachmentOptimal,
+                                                         .loadOp = vk::AttachmentLoadOp::eClear,
+                                                         .storeOp = vk::AttachmentStoreOp::eDontCare,
+                                                         .clearValue = vk_clear_depth};
+      vk::RenderingInfo vk_rendering_info{
+          .renderArea = vk::Rect2D{{0, 0}, vk_swapchain_extent},
+          .layerCount = 1,
+          .colorAttachmentCount = 1,
+          .pColorAttachments = &vk_color_attachment,
+          .pDepthAttachment = &vk_depth_attachment
+      };
+      vk_cmd.beginRendering(vk_rendering_info);
 
-        vk_cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, vk_graphics_pipeline);
-        vk_cmd.setViewport(0,
-                           vk::Viewport(0.0f,
-                                        0.0f,
-                                        static_cast<float>(vk_swapchain_extent.width),
-                                        static_cast<float>(vk_swapchain_extent.height),
-                                        0.0f,
-                                        1.0f));
-        vk_cmd.setScissor(0, vk::Rect2D(vk::Offset2D(0, 0), vk_swapchain_extent));
-        vk_cmd.bindVertexBuffers(0, vk_vertex_buffer, {0});
-        vk_cmd.bindIndexBuffer(vk_index_buffer, 0, vk::IndexTypeValue<decltype(indices)::value_type>::value);
-        vk_cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics,
-                                  vk_pipeline_layout,
-                                  0,
-                                  vk_descriptor_sets[current_frame],
-                                  nullptr);
-        vk_cmd.drawIndexed(indices.size, 1, 0, 0, 0);
-        vk_cmd.endRendering();
-      } // TracyVkZone("Render Scene")
+      vk_cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, vk_graphics_pipeline);
+      vk_cmd.setViewport(0,
+                         vk::Viewport(0.0f,
+                                      0.0f,
+                                      static_cast<float>(vk_swapchain_extent.width),
+                                      static_cast<float>(vk_swapchain_extent.height),
+                                      0.0f,
+                                      1.0f));
+      vk_cmd.setScissor(0, vk::Rect2D(vk::Offset2D(0, 0), vk_swapchain_extent));
+      vk_cmd.bindVertexBuffers(0, vk_vertex_buffer, {0});
+      vk_cmd.bindIndexBuffer(vk_index_buffer, 0, vk::IndexTypeValue<decltype(indices)::value_type>::value);
+      vk_cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics,
+                                vk_pipeline_layout,
+                                0,
+                                vk_descriptor_sets[current_frame],
+                                nullptr);
+      vk_cmd.drawIndexed(indices.size, 1, 0, 0, 0);
+      vk_cmd.endRendering();
 
-      {
-        imgui_render(vk_cmd, vk_sc->image_views[vk_image_index], vk_swapchain_extent);
-      } // TracyVkZone("ImGui Pass")
+      imgui_render(vk_cmd, vk_sc->image_views[vk_image_index], vk_swapchain_extent);
 
 
       vk_transition_image_layout(vk_cmd,
@@ -788,13 +768,26 @@ int main() {
         auto current_time = std::chrono::high_resolution_clock::now();
         float dt = std::chrono::duration<float>(current_time - s_prev_time).count();
         s_prev_time = current_time;
+
+        static glm::vec3 camera_pos = glm::vec3(2.0f);
+        static glm::vec3 camera_front = glm::normalize(glm::vec3(0.0f) - camera_pos);
+        static glm::vec3 world_up = glm::vec3(0.0f, 0.0f, 1.0f);
+
+        glm::vec3 camera_right = glm::normalize(glm::cross(camera_front, world_up));
+        glm::vec3 camera_up = glm::cross(camera_right, camera_front);
+
+        camera_pos += camera_front * move_forward;
+        camera_pos += camera_right * move_right;
+        camera_pos += camera_up * move_up;
+
+        glm::mat4 view_matrix = glm::lookAt(camera_pos, camera_pos + camera_front, world_up);
         if (!paused)
           s_accumulated_time += dt;
         UniformBufferObject ubo{
             .model = glm::rotate(glm::mat4(1.0f),
                                  s_accumulated_time * glm::radians(90.0f),
                                  glm::vec3(0.0f, 0.0f, 1.0f)),
-            .view = glm::lookAt(glm::vec3(2.0f, 2.0f, 2.0f), glm::vec3(0.0f, 0.0f, 0.0f), glm::vec3(0.0f, 0.0f, 1.0f)),
+            .view = view_matrix,
             .proj =
             glm::perspective(glm::radians(45.0f),
                              static_cast<float>(vk_swapchain_extent.width) / static_cast<float>(
@@ -865,13 +858,15 @@ int main() {
     }
   }
 
+
   // TODO: extract to destroy_vulkan_resources(...) -> void
   //~ Cleanup (reverse of creation order)
   {
     vk_abort_if_error(vk_device.waitIdle());
     imgui_shutdown();
 
-    vk_abort_if_error(vk_device.freeDescriptorSets(vk_descriptor_pool, vk_descriptor_sets.size(), vk_descriptor_sets));
+    vk_abort_if_error(
+        vk_device.freeDescriptorSets(vk_descriptor_pool, vk_descriptor_sets.size(), vk_descriptor_sets));
     vk_device.destroyDescriptorPool(vk_descriptor_pool);
     for (U64 i = 0; i < MAX_FRAMES_IN_FLIGHT; ++i)
       vk_device.destroyBuffer(vk_uniform_buffers[i]);
@@ -924,5 +919,6 @@ int main() {
     arena_release(app_arena);
     thread_ctx_release();
   }
-  return 0;
+  return
+      0;
 }

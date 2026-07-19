@@ -1,12 +1,12 @@
 #pragma once
 #include <cstdint>
 
-using S8  = std::int8_t;
+using S8 = std::int8_t;
 using S16 = std::int16_t;
 using S32 = std::int32_t;
 using S64 = std::int64_t;
 
-using U8  = std::uint8_t;
+using U8 = std::uint8_t;
 using U16 = std::uint16_t;
 using U32 = std::uint32_t;
 using U64 = std::uint64_t;
@@ -60,15 +60,34 @@ FORCE_INLINE T constexpr align_pow2(T x, T b) {
   return (x + b - 1) & ~(b - 1);
 }
 
+template<typename T>
+FORCE_INLINE T constexpr next_pow2(T x) {
+  if (x <= 1)
+    return 1;
+  --x;
+  x |= x >> 1;
+  x |= x >> 2;
+  x |= x >> 4;
+  x |= x >> 8;
+  x |= x >> 16;
+  if constexpr (sizeof(T) == 8) {
+    x |= x >> 32;
+  }
+  return x + 1;
+}
+
 consteval U64 kb(U64 n) {
   return n << 10;
 }
+
 consteval U64 mb(U64 n) {
   return n << 20;
 }
+
 consteval U64 gb(U64 n) {
   return n << 30;
 }
+
 consteval U64 tb(U64 n) {
   return n << 40;
 }
@@ -87,6 +106,7 @@ template<typename T>
 FORCE_INLINE T constexpr clamp_top(T a, T x) {
   return min(a, x);
 }
+
 template<typename T>
 FORCE_INLINE T constexpr clamp_bot(T x, T b) {
   return max(x, b);
@@ -131,7 +151,7 @@ FORCE_INLINE bool checked_align_pow2_u64(U64 x, U64 align, U64 *out) {
 //~ SourceLocation
 struct SourceLocation {
   char const *file;
-  unsigned    line;
+  unsigned line;
 
   static consteval SourceLocation current(char const *file = __builtin_FILE(), unsigned line = __builtin_LINE()) {
     return {file, line};
@@ -148,7 +168,7 @@ constexpr bool any(T val) {
 //~ Array
 template<typename T, U64 SIZE>
 struct Array {
-  T                    data[SIZE];
+  T data[SIZE];
   static constexpr U64 size() { return SIZE; }
   static constexpr U64 array_size() { return sizeof(T) * SIZE; }
   using value_type = T;
@@ -166,6 +186,7 @@ struct Array {
 
 template<typename T, typename... U>
 Array(T, U...) -> Array<T, 1 + sizeof...(U)>;
+
 template<typename T, U64 SIZE>
 void fill_array(Array<T, SIZE> &array, T value) {
   for (U64 i = 0; i < SIZE; i++) {
@@ -176,12 +197,13 @@ void fill_array(Array<T, SIZE> &array, T value) {
 //~ DynArray
 template<typename T>
 struct DynArray {
-  T  *data;
+  T *data;
   U64 size;
   U64 capacity;
 
   constexpr U64 array_size() { return sizeof(T) * size; }
   using value_type = T;
+
   T &operator[](U64 idx) {
     if (idx >= capacity) {
       INVALID_PATH;
@@ -198,11 +220,14 @@ struct String8 {
   U8 *str;
   U64 size;
 };
+
 internal String8 str8(U8 *str, U64 size) {
   String8 result{str, size};
   return result;
 }
+
 #define str8_lit(S) str8((U8 *)(S), sizeof(S) - 1)
+
 inline std::string to_std_string(String8 s) {
   return {reinterpret_cast<char const *>(s.str), s.size};
 }
@@ -214,8 +239,8 @@ template<typename T, U64 SIZE = 256>
 struct RingBuffer {
   T buffer[SIZE]{};
 
-  U64  head{};
-  U64  tail{};
+  U64 head{};
+  U64 tail{};
   bool full{false};
 
   static constexpr U64 MASK = SIZE - 1;
@@ -231,6 +256,7 @@ struct RingBuffer {
       full = true;
     }
   }
+
   bool pop(T &out) {
     if (empty())
       return false;
@@ -239,6 +265,108 @@ struct RingBuffer {
     full = false;
     return true;
   }
+
   // only valid for nonempty, caller needs to check
   T &get_last() { return buffer[(head - 1) & MASK]; }
+};
+
+//~ vecs
+template<typename T>
+struct Vec2 {
+  union {
+    T x;
+    T u;
+  };
+
+  union {
+    T y;
+    T v;
+  };
+
+
+  Vec2 &operator+=(const Vec2 &other) {
+    this->x += other.x;
+    this->y += other.y;
+    return *this;
+  }
+
+  Vec2 operator+(const Vec2 &other) {
+    Vec2 result = *this;
+    result += other;
+    return result;
+  }
+};
+
+template<typename T>
+struct Vec3 {
+  union {
+    T x;
+    T u;
+    T r;
+  };
+
+  union {
+    T y;
+    T v;
+    T g;
+  };
+
+  union {
+    T z;
+    T w;
+    T b;
+  };
+};
+
+template<typename T>
+struct Vec4 {
+  union {
+    T i;
+    T r;
+  };
+
+  union {
+    T j;
+    T g;
+  };
+
+  union {
+    T k;
+    T b;
+  };
+
+  union {
+    T l;
+    T a;
+  };
+};
+
+template<U64 SIZE>
+struct BitSet {
+  U64 bits[max(1UL, next_pow2(SIZE) >> 6)];
+
+  // TODO: probably more efficient methods for mapping previous's compared etc bitwise
+  //  but POC first
+  FORCE_INLINE void set(U64 idx) {
+    ASSERT(idx < SIZE);
+    bits[idx >> 6] |= 1ULL << (idx & 63);
+  }
+
+  FORCE_INLINE void clear(U64 idx) {
+    ASSERT(idx < SIZE);
+    bits[idx >> 6] &= ~(1ULL << (idx & 63));
+  }
+
+  FORCE_INLINE bool get(U64 idx) const {
+    ASSERT(idx < SIZE);
+    return (bits[idx >> 6] & (1ULL << (idx & 63))) != 0;
+  }
+
+  FORCE_INLINE bool operator[](U64 idx) const {
+    return get(idx);
+  }
+
+  static U64 constexpr size() {
+    return next_pow2(SIZE);
+  }
 };

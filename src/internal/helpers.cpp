@@ -15,11 +15,11 @@ internal AppWindow glfw_init_window(AppParams *app_params) {
 
   glfwSetWindowUserPointer(glfw_window, &res);
   glfwSetFramebufferSizeCallback(glfw_window, AppWindow::dispatch_resize);
-  glfwSetKeyCallback(glfw_window, AppWindow::dispatch_key);
   glfwSetScrollCallback(glfw_window, AppWindow::dispatch_scroll);
-  glfwSetCursorPosCallback(glfw_window, AppWindow::dispatch_cursor);
-  glfwSetMouseButtonCallback(glfw_window, AppWindow::dispatch_mouse_button);
   glfwSetWindowCloseCallback(glfw_window, AppWindow::dispatch_close);
+  glfwSetKeyCallback(glfw_window, AppWindow::key_callback);
+  glfwSetMouseButtonCallback(glfw_window, AppWindow::mouse_button_callback);
+  glfwSetCursorPosCallback(glfw_window, AppWindow::cursor_callback);
   glfwSetWindowRefreshCallback(glfw_window, AppWindow::dispatch_refresh);
   glfwSetCharCallback(glfw_window, AppWindow::dispatch_char);
   return res;
@@ -38,6 +38,40 @@ internal U32 glfw_get_required_extensions(char const **out_extensions, U32 max_e
     out_extensions[count++] = VK_EXT_DEBUG_UTILS_EXTENSION_NAME;
 #endif
   return count;
+}
+
+internal void handle_key_input(Key *input) {
+  auto current = &input->current;
+  auto previous = &input->previous;
+  auto pressed = &input->pressed;
+  auto released = &input->released;
+  auto held = &input->held;
+  for (U64 i = 0; i < current->size() >> 6; ++i) {
+    U64 cur = current->bits[i];
+    U64 prev = previous->bits[i];
+
+    pressed->bits[i] = cur & ~prev;
+    held->bits[i] = cur & prev;
+    released->bits[i] = ~cur & prev;
+    previous->bits[i] = cur;
+  }
+}
+
+internal void handle_mouse_input(Mouse *mouse) {
+  auto *current = &mouse->current;
+  auto *previous = &mouse->previous;
+  auto *pressed = &mouse->pressed;
+  auto *released = &mouse->released;
+  auto *held = &mouse->held;
+
+  uint64_t m_cur = current->bits[0];
+  uint64_t m_prev = previous->bits[0];
+
+  pressed->bits[0] = m_cur & ~m_prev;
+  held->bits[0] = m_cur & m_prev;
+  released->bits[0] = ~m_cur & m_prev;
+
+  previous->bits[0] = m_cur;
 }
 
 internal std::tuple<DynArray<Vertex>, DynArray<U32>> load_obj(Arena *arena, const char *obj_path) {

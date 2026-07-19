@@ -2,11 +2,12 @@
 #include "debug_ui.hpp"
 #include <imgui.h>
 
-static bool fuzzy_match(char const *query, char const *target) {
+internal bool fuzzy_match(char const *query, char const *target) {
+  constexpr char LOWER_SPACE = 0x20;
   if (!query || !*query)
     return true;
   while (*target && *query) {
-    if ((*target | 0x20) == (*query | 0x20))
+    if ((*target | LOWER_SPACE) == (*query | LOWER_SPACE))
       ++query;
     ++target;
   }
@@ -23,7 +24,7 @@ internal void debug_ui_palette_init(PaletteState *state, Arena *arena, DynArray<
     if (len > max_len)
       max_len = len;
   }
-  state->width = max_len * 8.0f + 60.0f;
+  state->width = static_cast<F32>(max_len) * 8.0f + 60.0f;
 }
 
 internal void debug_ui_palette_toggle(PaletteState *state) {
@@ -78,7 +79,7 @@ internal void debug_ui_palette_render(PaletteState *state) {
     if (vi == state->selected && vi != state->prev_selected)
       ImGui::SetScrollHereY();
     if (ImGui::Selectable(state->actions.data[i].name, vi == state->selected)) {
-      state->actions.data[i].fn(state->actions.data[i].ctx);
+      state->actions.data[i].fn();
       state->open = false;
       state->search[0] = '\0';
     }
@@ -96,7 +97,7 @@ internal void debug_ui_palette_render(PaletteState *state) {
       if (!fuzzy_match(state->search, state->actions.data[i].name))
         continue;
       if (vi == state->selected) {
-        state->actions.data[i].fn(state->actions.data[i].ctx);
+        state->actions.data[i].fn();
         state->open = false;
         state->search[0] = '\0';
         break;

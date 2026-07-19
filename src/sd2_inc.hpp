@@ -31,3 +31,5 @@
 #include "internal/profiler.hpp"
 #include "internal/thread_ctx.hpp"
 #include "internal/vk_helpers.hpp"
+#include "internal/base_arena.hpp"
+#include "internal/base_array.hpp"

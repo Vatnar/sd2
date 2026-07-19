@@ -1,5 +1,8 @@
 #pragma once
 
+#include "base.hpp"
+#include "base_array.hpp"
+
 struct VKInstanceResult {
   vk::Instance instance;
   vk::SurfaceKHR surface;

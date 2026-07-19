@@ -22,7 +22,13 @@ struct Mouse {
 
   BitSet<GLFW_MOUSE_BUTTON_LAST> previous{};
   BitSet<GLFW_MOUSE_BUTTON_LAST> current{};
-  Vec2<F64> pos{};
+
+  Vec2<F64> current_pos{};
+  Vec2<F64> previous_pos{};
+  Vec2<F64> delta_pos{};
+
+  Vec2<F64> current_scroll{};
+  Vec2<F64> delta_scroll{};
 };
 
 struct AppWindow {
@@ -47,7 +53,7 @@ struct AppWindow {
 
   static void dispatch_scroll(GLFWwindow *glfw_window, F64 xoffset, F64 yoffset) {
     AppWindow *window = static_cast<AppWindow *>(glfwGetWindowUserPointer(glfw_window));
-    window->scroll_delta_pending += {.x = xoffset, .y = yoffset};
+    window->mouse.current_scroll += {.x = xoffset, .y = yoffset};
   }
 
   static void dispatch_close(GLFWwindow *glfw_window) {
@@ -83,7 +89,7 @@ struct AppWindow {
 
   static void cursor_callback(GLFWwindow *glfw_window, F64 xpos, F64 ypos) {
     AppWindow *window = static_cast<AppWindow *>(glfwGetWindowUserPointer(glfw_window));
-    window->mouse.pos = {.x = xpos, .y = ypos};
+    window->mouse.current_pos = {.x = xpos, .y = ypos};
   }
 
 

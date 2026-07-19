@@ -17,12 +17,18 @@ VULKAN_HPP_DEFAULT_DISPATCH_LOADER_DYNAMIC_STORAGE
 static vk::detail::DynamicLoader g_vulkan_dynamic_loader{};
 
 
-struct PalCtx {
-  bool *paused;
-  AppWindow *window;
+struct DebugCtx {
+  bool *paused{};
+  AppWindow *window{};
+  FrameClock *clock{};
+  bool *debug_show_window{};
+  const char *last_command{};
+  bool *debug_show_last_command{};
+  bool *debug_show_cursor_info{};
+  bool *debug_show_timings{};
 };
 
-static PalCtx g_pal_ctx{};
+static DebugCtx g_dbg_ctx{};
 
 struct Vertex {
   glm::vec3 pos;
@@ -80,12 +86,68 @@ constexpr char const *TEXTURE_PATH = "assets/textures/viking_room.png";
 internal std::tuple<DynArray<Vertex>, DynArray<U32>> load_obj(Arena *arena, const char *obj_path);
 
 //~ cpp
-#include "internal/arena.cpp"
+#include "internal/base_arena.cpp"
 #include "internal/vk_helpers.cpp"
 #include "internal/helpers.cpp"
 #include "internal/imgui_helpers.cpp"
 #include "internal/debug_ui.cpp"
 
+
+FORCE_INLINE internal void toggle_cursor() {
+  switch (glfwGetInputMode(g_dbg_ctx.window->glfw_window, GLFW_CURSOR)) {
+    case GLFW_CURSOR_DISABLED: {
+      glfwSetInputMode(g_dbg_ctx.window->glfw_window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
+      break;
+    }
+    case GLFW_CURSOR_NORMAL: {
+      glfwSetInputMode(g_dbg_ctx.window->glfw_window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
+      break;
+    }
+  }
+}
+
+FORCE_INLINE internal void show_cursor() {
+  glfwSetInputMode(g_dbg_ctx.window->glfw_window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
+}
+
+FORCE_INLINE internal void hide_cursor() {
+  glfwSetInputMode(g_dbg_ctx.window->glfw_window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
+}
+
+FORCE_INLINE internal void toggle_fullscreen() {
+  auto *w = g_dbg_ctx.window;
+  GLFWwindow *glfw_window = g_dbg_ctx.window->glfw_window;
+  if (!w->fullscreen) {
+    glfwGetWindowPos(glfw_window, &w->windowed_x, &w->windowed_y);
+    glfwGetWindowSize(glfw_window, &w->windowed_w, &w->windowed_h);
+    int cx = w->windowed_x + w->windowed_w / 2;
+    int cy = w->windowed_y + w->windowed_h / 2;
+    int count;
+    GLFWmonitor **monitors = glfwGetMonitors(&count);
+    GLFWmonitor *monitor = glfwGetPrimaryMonitor();
+    for (int i = 0; i < count; i++) {
+      int mx, my;
+      glfwGetMonitorPos(monitors[i], &mx, &my);
+      GLFWvidmode const *mode = glfwGetVideoMode(monitors[i]);
+      if (cx >= mx && cx < mx + static_cast<int>(mode->width) &&
+          cy >= my && cy < my + static_cast<int>(mode->height)) {
+        monitor = monitors[i];
+        break;
+      }
+    }
+    int mx, my;
+    glfwGetMonitorPos(monitor, &mx, &my);
+    GLFWvidmode const *mode = glfwGetVideoMode(monitor);
+    glfwSetWindowAttrib(glfw_window, GLFW_DECORATED, GLFW_FALSE);
+    glfwSetWindowPos(glfw_window, mx, my);
+    glfwSetWindowSize(glfw_window, mode->width, mode->height);
+  } else {
+    glfwSetWindowAttrib(glfw_window, GLFW_DECORATED, GLFW_TRUE);
+    glfwSetWindowPos(glfw_window, w->windowed_x, w->windowed_y);
+    glfwSetWindowSize(glfw_window, w->windowed_w, w->windowed_h);
+  }
+  w->fullscreen = !w->fullscreen;
+}
 
 int main() {
   thread_ctx_init();
@@ -212,63 +274,44 @@ int main() {
   imgui_setup_theme();
 
 
-  g_pal_ctx.paused = &paused;
-  g_pal_ctx.window = &window;
+  g_dbg_ctx.paused = &paused;
+  g_dbg_ctx.window = &window;
 
-  DynArray<PaletteAction> pa{};
-  pa.size = pa.capacity = 5;
-  pa.data = app_arena->push_array<PaletteAction>(5);
-  pa.data[0] = {"Toggle Fullscreen", [] {
-    auto *w = g_pal_ctx.window;
-    GLFWwindow *glfw_window = g_pal_ctx.window->glfw_window;
-    if (!w->fullscreen) {
-      glfwGetWindowPos(glfw_window, &w->windowed_x, &w->windowed_y);
-      glfwGetWindowSize(glfw_window, &w->windowed_w, &w->windowed_h);
-      int cx = w->windowed_x + w->windowed_w / 2;
-      int cy = w->windowed_y + w->windowed_h / 2;
-      int count;
-      GLFWmonitor **monitors = glfwGetMonitors(&count);
-      GLFWmonitor *monitor = glfwGetPrimaryMonitor();
-      for (int i = 0; i < count; i++) {
-        int mx, my;
-        glfwGetMonitorPos(monitors[i], &mx, &my);
-        GLFWvidmode const *mode = glfwGetVideoMode(monitors[i]);
-        if (cx >= mx && cx < mx + static_cast<int>(mode->width) &&
-            cy >= my && cy < my + static_cast<int>(mode->height)) {
-          monitor = monitors[i];
-          break;
-        }
-      }
-      int mx, my;
-      glfwGetMonitorPos(monitor, &mx, &my);
-      GLFWvidmode const *mode = glfwGetVideoMode(monitor);
-      glfwSetWindowAttrib(glfw_window, GLFW_DECORATED, GLFW_FALSE);
-      glfwSetWindowPos(glfw_window, mx, my);
-      glfwSetWindowSize(glfw_window, mode->width, mode->height);
-    } else {
-      glfwSetWindowAttrib(glfw_window, GLFW_DECORATED, GLFW_TRUE);
-      glfwSetWindowPos(glfw_window, w->windowed_x, w->windowed_y);
-      glfwSetWindowSize(glfw_window, w->windowed_w, w->windowed_h);
-    }
-    w->fullscreen = !w->fullscreen;
-  }};
-  pa.data[1] = {"Toggle Pause", [] {
-                  *g_pal_ctx.paused = !*g_pal_ctx.paused;
-                }
-  };
-  pa.data[2] = {"Quit", [] {
-                  glfwSetWindowShouldClose(g_pal_ctx.window->glfw_window, true);
-                }
-  };
-  pa.data[3] = {"Exit", [] {
-                  glfwSetWindowShouldClose(g_pal_ctx.window->glfw_window, true);
-                }
-  };
-  pa.data[4] = {.name = "Print cursor pos", .fn = [] {
-    Vec2 pos = g_pal_ctx.window->mouse.pos;
-    printf("Mouse pos: %lf, %lf\n", pos.x, pos.y);;
-  }};
-  debug_ui_palette_init(&palette_state, app_arena, pa);
+  //~ Palette
+  auto pa = DynArray<PaletteAction>::from_init(app_arena,
+                                               {
+                                                   PaletteAction::call("fullscreen", toggle_fullscreen),
+                                                   PaletteAction::call("pause",
+                                                                       [] {
+                                                                         *g_dbg_ctx.paused = !*g_dbg_ctx.paused;
+                                                                         if (*g_dbg_ctx.paused)
+                                                                           show_cursor();
+                                                                         else {
+                                                                           hide_cursor();
+                                                                         }
+                                                                       }
+                                                       ),
+                                                   PaletteAction::call("exit/quit",
+                                                                       [] {
+                                                                         glfwSetWindowShouldClose(
+                                                                             g_dbg_ctx.window->glfw_window,
+                                                                             true);
+                                                                       }
+                                                       ),
+                                                   PaletteAction::call("toggle cursor",
+                                                                       [] {
+                                                                         toggle_cursor();
+                                                                       }
+                                                       ),
+                                                   PaletteAction::toggle<^^DebugCtx::debug_show_cursor_info>(g_dbg_ctx),
+                                                   PaletteAction::toggle<^^DebugCtx::debug_show_window>(g_dbg_ctx),
+                                                   PaletteAction::toggle<^^
+                                                     DebugCtx::debug_show_last_command>(g_dbg_ctx),
+                                                   PaletteAction::toggle<^^DebugCtx::debug_show_timings>(g_dbg_ctx)
+                                               });
+  debug_ui_palette_init(&palette_state,
+                        pa
+      );
 
   // TODO: extract to create_pipeline(device, format, render_format, extent, arena) -> {pipeline, layout, module,
   // ds_layout}
@@ -279,6 +322,7 @@ int main() {
   vk::Pipeline vk_graphics_pipeline{};
   vk::DescriptorSetLayout vk_descriptor_set_layout{};
   vk::Image vk_depth_image{};
+
   vk::ImageView vk_depth_image_view{};
   {
     // TODO: extract to create_shader_module(device, arena, path) -> ShaderModule
@@ -418,7 +462,7 @@ int main() {
                                        DynArray<U32> indices) -> std::tuple<vk::Buffer, vk::Buffer> {
     vk::Buffer vertex_buffer{}, index_buffer{};
     {
-      vk::DeviceSize buffer_size = vertices.array_size();
+      vk::DeviceSize buffer_size = vertices.byte_size();
 
       auto [staging_buffer, staging_alloc] =
           vk_create_buffer(vk_phys_dev, vk_device, buffer_size, vk::BufferUsageFlagBits::eTransferSrc, host_arena);
@@ -437,7 +481,7 @@ int main() {
       vk_device.destroyBuffer(staging_buffer);
     }
     {
-      vk::DeviceSize buffer_size = indices.array_size();
+      vk::DeviceSize buffer_size = indices.byte_size();
 
       auto [staging_buffer, staging_alloc] =
           vk_create_buffer(vk_phys_dev, vk_device, buffer_size, vk::BufferUsageFlagBits::eTransferSrc, host_arena);
@@ -473,6 +517,7 @@ int main() {
   Array<vk::Buffer, MAX_FRAMES_IN_FLIGHT> vk_uniform_buffers{};
   Array<void *, MAX_FRAMES_IN_FLIGHT> vk_uniform_buffers_mapped{};
   vk::DescriptorPool vk_descriptor_pool{};
+
   Array<vk::DescriptorSet, MAX_FRAMES_IN_FLIGHT> vk_descriptor_sets{};
   {
     for (U64 i = 0; i < MAX_FRAMES_IN_FLIGHT; ++i) {
@@ -530,6 +575,7 @@ int main() {
       vk_device.updateDescriptorSets(descriptor_writes.data, {});
     }
   }
+
   init_arena = arena_release(init_arena);
 
   //~ Main Loop
@@ -544,14 +590,16 @@ int main() {
     vk::ClearValue vk_clear_depth = {
         .depthStencil = {.depth = 1.0, .stencil = 0}
     };
+    glfwSetInputMode(window.glfw_window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
 
 
     FrameClock clock{.target_ms = target_frame_ms};
+    g_dbg_ctx.clock = &clock;
     while (!glfwWindowShouldClose(window.glfw_window)) {
       F32 move_up = 0.0f;
       F32 move_right = 0.0f;
       F32 move_forward = 0.0f;
-      F32 key_speed = 0.1f;
+      local_persist F32 key_speed = 0.1f;
       clock.start();
       frame_arena->clear();
       glfwPollEvents();
@@ -566,22 +614,6 @@ int main() {
         debug_ui_palette_toggle(&palette_state);
       }
 
-      if (!palette_state.open) {
-        if (window.key.pressed[GLFW_KEY_SPACE] || window.key.held[GLFW_KEY_SPACE])
-          move_up += 1.0f * key_speed;
-        if (window.key.pressed[GLFW_KEY_LEFT_SHIFT] || window.key.held[GLFW_KEY_LEFT_SHIFT])
-          move_up -= 1.0f * key_speed;
-
-        if (window.key.pressed[GLFW_KEY_W] || window.key.held[GLFW_KEY_W])
-          move_forward += 1.0f * key_speed;
-        if (window.key.pressed[GLFW_KEY_S] || window.key.held[GLFW_KEY_S])
-          move_forward -= 1.0f * key_speed;
-
-        if (window.key.pressed[GLFW_KEY_D] || window.key.held[GLFW_KEY_D])
-          move_right += 1.0f * key_speed;
-        if (window.key.pressed[GLFW_KEY_A] || window.key.held[GLFW_KEY_A])
-          move_right -= 1.0f * key_speed;
-      }
 
       if (!monitor_detected) {
         int wx, wy, ww, wh;
@@ -614,9 +646,11 @@ int main() {
       // TODO: trigger palette with ctrl p by defaulrt
       // TODO: m,ovement
 
+      //~ ImGui
       {
         imgui_new_frame();
         debug_ui_palette_render(&palette_state);
+        debug_ui_debug_ui(&clock.report);
       }
 
       // TODO: extract to render_frame(vk_device, ...) -> bool (swapchain_needs_rebuild)
@@ -762,23 +796,62 @@ int main() {
       vk_abort_if_error(vk_cmd.end());
 
       {
+        if (!palette_state.open) {
+          if (window.key.pressed[GLFW_KEY_SPACE] || window.key.held[GLFW_KEY_SPACE])
+            move_up += 1.0f * key_speed;
+          if (window.key.pressed[GLFW_KEY_LEFT_SHIFT] || window.key.held[GLFW_KEY_LEFT_SHIFT])
+            move_up -= 1.0f * key_speed;
+
+          if (window.key.pressed[GLFW_KEY_W] || window.key.held[GLFW_KEY_W])
+            move_forward += 1.0f * key_speed;
+          if (window.key.pressed[GLFW_KEY_S] || window.key.held[GLFW_KEY_S])
+            move_forward -= 1.0f * key_speed;
+
+          if (window.key.pressed[GLFW_KEY_D] || window.key.held[GLFW_KEY_D])
+            move_right += 1.0f * key_speed;
+          if (window.key.pressed[GLFW_KEY_A] || window.key.held[GLFW_KEY_A])
+            move_right -= 1.0f * key_speed;
+
+          key_speed += 0.05f * static_cast<F32>(window.mouse.delta_scroll.y);
+          key_speed = clamp_bot(0.0005f, key_speed);
+        }
         static float s_accumulated_time = 0.0f;
         static auto s_prev_time = std::chrono::high_resolution_clock::now();
         auto current_time = std::chrono::high_resolution_clock::now();
         float dt = std::chrono::duration<float>(current_time - s_prev_time).count();
         s_prev_time = current_time;
+        //~ State update
 
         static glm::vec3 camera_pos = glm::vec3(2.0f);
-        static glm::vec3 camera_front = glm::normalize(glm::vec3(0.0f) - camera_pos);
         static glm::vec3 world_up = glm::vec3(0.0f, 0.0f, 1.0f);
 
+        // intial direction
+        static glm::vec3 camera_front = glm::normalize(glm::vec3(0.0f) - camera_pos);
+
+        constexpr F32 MOUSE_SENSITIVITY = 6.0f;
+        static F32 pitch = glm::degrees(glm::asin(camera_front.z));
+        static F32 yaw = glm::degrees(glm::atan(camera_front.y, camera_front.x));
+
+        if (!paused) {
+          yaw -= window.mouse.delta_pos.x * MOUSE_SENSITIVITY * dt;
+          pitch -= window.mouse.delta_pos.y * MOUSE_SENSITIVITY * dt;
+          pitch = clamp(-89.9f, pitch, 89.9f);
+        }
+
+        glm::vec3 front;
+        front.x = cos(glm::radians(yaw)) * cos(glm::radians(pitch));
+        front.y = sin(glm::radians(yaw)) * cos(glm::radians(pitch));
+        front.z = sin(glm::radians(pitch));
+        camera_front = glm::normalize(front);
+
         glm::vec3 camera_right = glm::normalize(glm::cross(camera_front, world_up));
-        glm::vec3 camera_up = glm::cross(camera_right, camera_front);
+        glm::vec3 camera_up = glm::normalize(glm::cross(camera_right, camera_front));
 
-        camera_pos += camera_front * move_forward;
-        camera_pos += camera_right * move_right;
-        camera_pos += camera_up * move_up;
-
+        if (!paused) {
+          camera_pos += camera_front * move_forward;
+          camera_pos += camera_right * move_right;
+          camera_pos += camera_up * move_up;
+        }
         glm::mat4 view_matrix = glm::lookAt(camera_pos, camera_pos + camera_front, world_up);
         if (!paused)
           s_accumulated_time += dt;
@@ -797,6 +870,7 @@ int main() {
         ubo.proj[1][1] *= -1;
         MemoryCopy(vk_uniform_buffers_mapped[current_frame], &ubo, sizeof(ubo));
       }
+      //~ vk submit
 
       vk::PipelineStageFlags vk_wait_stage = vk::PipelineStageFlagBits::eColorAttachmentOutput;
       vk::SubmitInfo vk_submit_info{.waitSemaphoreCount = 1,

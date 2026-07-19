@@ -171,55 +171,6 @@ constexpr bool any(T val) {
 
 #define MemoryCopy(dst, src, size) __builtin_memmove((dst), (src), (size))
 
-//~ Array
-template<typename T, U64 SIZE>
-struct Array {
-  T data[SIZE];
-  static constexpr U64 size() { return SIZE; }
-  static constexpr U64 array_size() { return sizeof(T) * SIZE; }
-  using value_type = T;
-
-  operator T *() { return data; }
-  operator T const *() const { return data; }
-
-  T &operator[](U64 idx) {
-    if (idx >= SIZE) {
-      INVALID_PATH;
-    }
-    return data[idx];
-  }
-};
-
-template<typename T, typename... U>
-Array(T, U...) -> Array<T, 1 + sizeof...(U)>;
-
-template<typename T, U64 SIZE>
-void fill_array(Array<T, SIZE> &array, T value) {
-  for (U64 i = 0; i < SIZE; i++) {
-    array.data[i] = value;
-  }
-}
-
-//~ DynArray
-template<typename T>
-struct DynArray {
-  T *data;
-  U64 size;
-  U64 capacity;
-
-  constexpr U64 array_size() { return sizeof(T) * size; }
-  using value_type = T;
-
-  T &operator[](U64 idx) {
-    if (idx >= capacity) {
-      INVALID_PATH;
-    }
-    return data[idx];
-  }
-
-  operator T *() { return data; }
-  operator T const *() const { return data; }
-};
 
 //~ String8
 struct String8 {
@@ -299,6 +250,18 @@ struct Vec2 {
   Vec2 operator+(const Vec2 &other) {
     Vec2 result = *this;
     result += other;
+    return result;
+  }
+
+  Vec2 &operator-=(const Vec2 &other) {
+    this->x -= other.x;
+    this->y -= other.y;
+    return *this;
+  }
+
+  Vec2 operator-(const Vec2 &other) {
+    Vec2 result = *this;
+    result -= other;
     return result;
   }
 };

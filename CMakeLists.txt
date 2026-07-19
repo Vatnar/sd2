@@ -19,7 +19,7 @@ if (IMGUI_TRACE_ALLOC)
 endif ()
 
 set(CPP_INCLUDE
-        src/internal/arena.cpp
+        src/internal/base_arena.cpp
         src/internal/vk_helpers.cpp
         src/internal/debug_ui.cpp
 )

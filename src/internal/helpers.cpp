@@ -72,6 +72,12 @@ internal void handle_mouse_input(Mouse *mouse) {
   released->bits[0] = ~m_cur & m_prev;
 
   previous->bits[0] = m_cur;
+
+  mouse->delta_pos = mouse->current_pos - mouse->previous_pos;
+  mouse->previous_pos = mouse->current_pos;
+
+  mouse->delta_scroll = mouse->current_scroll;
+  mouse->current_scroll = {.x = 0.0, .y = 0.0};
 }
 
 internal std::tuple<DynArray<Vertex>, DynArray<U32>> load_obj(Arena *arena, const char *obj_path) {

@@ -544,7 +544,6 @@ int main() {
     vk::ClearValue vk_clear_depth = {
         .depthStencil = {.depth = 1.0, .stencil = 0}
     };
-    //~ input init
 
 
     FrameClock clock{.target_ms = target_frame_ms};

@@ -38,11 +38,17 @@ using F64 = double;
 #define NO_OP           ((void)0)
 
 
-#if defined(__GNUC__) || defined(__clang__)
-#define FORCE_INLINE [[gnu::always_inline]] inline
+#if defined(__clang__)
+#define FORCE_INLINE [[gnu::always_inline]] [[gnu::gnu_inline]] extern inline
+#elif defined(__GNUC__)
+#define FORCE_INLINE __attribute__((always_inline)) inline
+#elif defined(_MSC_VER)
+#pragma warning(error: 4714) // 'function' marked as __forceinline not inlined
+#define FORCE_INLINE __forceinline
 #else
-#error "Not defined for your compiler"
+#error "FORCE_INLINE not supported on this compiler"
 #endif
+
 
 #define internal      static
 #define local_persist static
@@ -345,8 +351,6 @@ template<U64 SIZE>
 struct BitSet {
   U64 bits[max(1UL, next_pow2(SIZE) >> 6)];
 
-  // TODO: probably more efficient methods for mapping previous's compared etc bitwise
-  //  but POC first
   FORCE_INLINE void set(U64 idx) {
     ASSERT(idx < SIZE);
     bits[idx >> 6] |= 1ULL << (idx & 63);

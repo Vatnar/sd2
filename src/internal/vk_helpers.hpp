@@ -299,7 +299,7 @@ struct PreRasterLibDesc {
   vk::FrontFace front_face{vk::FrontFace::eCounterClockwise};
   bool depth_bias{false};
   F32 line_width{1.0f};
-  vk::DynamicState const* dynamic_states{nullptr};
+  vk::DynamicState const *dynamic_states{nullptr};
   U32 dynamic_state_count{0};
 };
 
@@ -330,7 +330,7 @@ internal vk::Pipeline create_gpl(vk::Device vk_device,
 internal vk::DescriptorSetLayout create_descriptor_set_layout(
     vk::Device device,
     U32 binding_count,
-    vk::DescriptorSetLayoutBinding const* bindings);
+    vk::DescriptorSetLayoutBinding const *bindings);
 
 internal vk::PipelineLayout create_pipeline_layout(
     vk::Device device,
@@ -338,30 +338,74 @@ internal vk::PipelineLayout create_pipeline_layout(
 
 internal vk::Pipeline create_vertex_input_library(
     vk::Device device,
-    VertexInputLibDesc const& desc);
+    VertexInputLibDesc const &desc);
 
 internal vk::Pipeline create_pre_raster_library(
     vk::Device device,
     vk::PipelineLayout layout,
-    PreRasterLibDesc const& desc,
-    vk::PipelineShaderStageCreateInfo const* stages,
+    PreRasterLibDesc const &desc,
+    vk::PipelineShaderStageCreateInfo const *stages,
     U32 stage_count);
 
 internal vk::Pipeline create_fragment_library(
     vk::Device device,
     vk::PipelineLayout layout,
-    FragmentLibDesc const& desc,
-    vk::PipelineShaderStageCreateInfo const* stages,
+    FragmentLibDesc const &desc,
+    vk::PipelineShaderStageCreateInfo const *stages,
     U32 stage_count);
 
 internal vk::Pipeline create_fragment_output_library(
     vk::Device device,
-    FragmentOutputLibDesc const& desc);
+    FragmentOutputLibDesc const &desc);
 
 internal vk::Pipeline create_linked_pipeline(
     vk::Device device,
     vk::PipelineLayout layout,
     U32 library_count,
-    vk::Pipeline const* libraries,
+    vk::Pipeline const *libraries,
     vk::Format color_format,
     vk::Format depth_format);
+
+//~ Transient buffers
+struct TransientAlloc {
+  vk::Buffer buffer{};
+  void *mapped{};
+  U64 offset{};
+  U64 size{};
+};
+
+struct TransientBufferFrame {
+  vk::Buffer buffer{};
+  void *mapped{};
+  U64 used{};
+};
+
+struct TransientBuffer {
+  VKGpuArena *arena{};
+  Array<TransientBufferFrame, MAX_FRAMES_IN_FLIGHT> frames{};
+  U64 size_per_frame{};
+
+  void reset(U32 frame_index) {
+    frames[frame_index].used = 0;
+  }
+
+  TransientAlloc alloc(U32 frame_index, U64 size, U64 alignment) {
+    auto &f = frames[frame_index];
+    U64 offset = (f.used + alignment - 1) & ~(alignment - 1);
+    ASSERT_ALWAYS(offset + size <= size_per_frame);
+    f.used = offset + size;
+    return {
+        .buffer = f.buffer,
+        .mapped = static_cast<U8 *>(f.mapped) + offset,
+        .offset = offset,
+        .size = size
+    };
+  }
+};
+
+internal TransientBuffer vk_create_transient_buffer(vk::PhysicalDevice phys_dev,
+                                                    vk::Device device,
+                                                    VKGpuArena *arena,
+                                                    U64 size_per_frame,
+                                                    vk::BufferUsageFlags usage);
+internal void vk_destroy_transient_buffer(vk::Device device, TransientBuffer *tb);

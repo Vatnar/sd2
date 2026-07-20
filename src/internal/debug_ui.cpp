@@ -122,6 +122,7 @@ struct DebugUIState {
   bool debug_show_cursor_info = false;
   bool debug_show_scroll_info = false;
   bool debug_show_camera_info = false;
+  bool debug_show_line_width = false;
 };
 
 static DebugUIState g_ui{};
@@ -138,9 +139,7 @@ internal void save_debug_ui_state() {
 }
 
 internal void debug_ui_debug_ui(TimeReport *report) {
-  // TODO: save the state of these cross runs
-
-
+  // todo:, we can probably collapse this
   [[unlikely]] if (!g_dbg_ctx.debug_show_window)
     g_dbg_ctx.debug_show_window = &g_ui.debug_show_ui;
   [[unlikely]] if (!g_dbg_ctx.debug_show_timings)
@@ -155,6 +154,11 @@ internal void debug_ui_debug_ui(TimeReport *report) {
     g_dbg_ctx.debug_show_scroll_info = &g_ui.debug_show_scroll_info;
   [[unlikely]] if (!g_dbg_ctx.debug_show_camera_info)
     g_dbg_ctx.debug_show_camera_info = &g_ui.debug_show_camera_info;
+  [[unlikely]] if (!g_dbg_ctx.debug_show_line_width)
+    g_dbg_ctx.debug_show_line_width = &g_ui.debug_show_line_width;
+  [[unlikely]] if (!g_dbg_ctx.debug_show_line_width)
+    g_dbg_ctx.debug_show_line_width = &g_ui.debug_show_line_width;
+
   //~ Debug UI
   if (g_ui.debug_show_ui) {
     if (ImGui::Begin("debug",
@@ -225,6 +229,14 @@ internal void debug_ui_debug_ui(TimeReport *report) {
         imgui_draw_glm_vec32f("right", g_dbg_ctx.camera->right());
         imgui_draw_glm_vec32f("up   ", g_dbg_ctx.camera->up());
       }
+    }
+    ImGui::End();
+  }
+
+
+  if (*g_dbg_ctx.debug_show_line_width) {
+    if (ImGui::Begin("Line Width", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+      ImGui::SliderFloat("Width", &g_dbg_ctx.line_width, 1.0f, 20.0f, "%.1f");
     }
     ImGui::End();
   }

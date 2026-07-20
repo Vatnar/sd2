@@ -63,7 +63,7 @@ template<typename T, U64 SIZE>
 struct Array {
   T data[SIZE];
   static constexpr U64 size() { return SIZE; }
-  static constexpr U64 array_size() { return sizeof(T) * SIZE; }
+  static constexpr U64 byte_count() { return sizeof(T) * SIZE; }
   using value_type = T;
 
   operator T *() { return data; }

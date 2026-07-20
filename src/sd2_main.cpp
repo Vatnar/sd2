@@ -29,6 +29,8 @@ struct DebugCtx {
   bool *debug_show_camera_info{};
   Camera *camera;
   bool *debug_show_scroll_info;
+  bool *debug_show_line_width{};
+  float line_width{5.0f};
 };
 
 static DebugCtx g_dbg_ctx{};
@@ -337,6 +339,7 @@ int main() {
                                                    PaletteAction::toggle<^^DebugCtx::debug_show_timings>(g_dbg_ctx),
                                                    PaletteAction::toggle<^^DebugCtx::debug_show_camera_info>(g_dbg_ctx),
                                                    PaletteAction::toggle<^^DebugCtx::debug_show_scroll_info>(g_dbg_ctx),
+                                                   PaletteAction::toggle<^^DebugCtx::debug_show_line_width>(g_dbg_ctx),
                                                });
   debug_ui_palette_init(&palette_state,
                         pa
@@ -352,7 +355,6 @@ int main() {
   vk::Pipeline vk_line_a{}, vk_line_b{}, vk_line_c{};
   vk::Pipeline vk_graphics_pipeline{};
   vk::Pipeline vk_line_pipeline{};
-  vk::Buffer vk_line_vertex_buffer{};
 
   {
     TempScope scratch = scratch_begin_scoped(0, 0);
@@ -382,7 +384,6 @@ int main() {
         DynArray<VKShaderStageDesc>::from_init(scratch, {vert_desc, frag_desc, line_vert_desc, line_frag_desc});
     auto shader_stages = build_shader_stages(scratch, vk_device, &shader_descs);
 
-    //--- Shared: depth resources (swapchain lifetime, not pipeline lifetime) ---
     VKDepthResources depth = vk_create_depth_resources(
         vk_phys_dev,
         vk_device,
@@ -393,7 +394,6 @@ int main() {
     vk_depth_image_view = depth.tex.image_view;
     vk::Format depth_format = depth.format;
 
-    //--- Shared: descriptor set layout + pipeline layout ---
     Array bindings{
         vk::DescriptorSetLayoutBinding{.binding = 0,
                                        .descriptorType = vk::DescriptorType::eUniformBuffer,
@@ -407,7 +407,6 @@ int main() {
     vk_descriptor_set_layout = create_descriptor_set_layout(vk_device, bindings.size(), bindings);
     vk_pipeline_layout = create_pipeline_layout(vk_device, vk_descriptor_set_layout);
 
-    //--- Shared D: Fragment Output Interface ---
     FragmentOutputLibDesc desc_d{
         .msaa_samples = vk_msaa_samples,
         .color_format = vk_chosen_format,
@@ -415,7 +414,6 @@ int main() {
     };
     vk_output_lib = create_fragment_output_library(vk_device, desc_d);
 
-    //--- Model pipeline: A (Vertex Input Interface) ---
     VertexInputLibDesc desc_a{
         .bindings = TextureVertex::get_binding_descriptions().to_dyn(scratch),
         .attributes = TextureVertex::get_attribute_descriptions().to_dyn(scratch),
@@ -423,7 +421,6 @@ int main() {
     };
     vk_model_a = create_vertex_input_library(vk_device, desc_a);
 
-    //--- Model pipeline: B (Pre-Rasterization Shaders) ---
     PreRasterLibDesc desc_b{};
     vk_model_b = create_pre_raster_library(
         vk_device,
@@ -432,7 +429,6 @@ int main() {
         shader_stages.stages,
         1);
 
-    //--- Model pipeline: C (Fragment Shader) ---
     FragmentLibDesc desc_c{
         .msaa_samples = vk_msaa_samples,
         .sample_shading_enable = vk::True,
@@ -445,7 +441,6 @@ int main() {
         &shader_stages.stages[1],
         1);
 
-    //--- Model pipeline: Link ---
     PROFILE_START("pipeline_creation");
     vk::Pipeline model_libs[] = {vk_model_a, vk_model_b, vk_model_c, vk_output_lib};
     vk_graphics_pipeline = create_linked_pipeline(
@@ -458,7 +453,6 @@ int main() {
     U64 pipe_cycles = PROFILE_END();
     printf("Model pipeline creation: %lu cycles\n", pipe_cycles);
 
-    //--- Line pipeline: A (LineVertex, line list) ---
     VertexInputLibDesc line_desc_a{
         .bindings = DynArray<vk::VertexInputBindingDescription>::from_init(scratch,
                                                                            {LineVertex::get_binding_description()}),
@@ -467,8 +461,8 @@ int main() {
     };
     vk_line_a = create_vertex_input_library(vk_device, line_desc_a);
 
-    //--- Line pipeline: B (same raster defaults, dynamic line width) ---
-    vk::DynamicState line_states[] = {vk::DynamicState::eViewport, vk::DynamicState::eScissor, vk::DynamicState::eLineWidth};
+    vk::DynamicState line_states[] = {vk::DynamicState::eViewport, vk::DynamicState::eScissor,
+                                      vk::DynamicState::eLineWidth};
     vk_line_b = create_pre_raster_library(
         vk_device,
         vk_pipeline_layout,
@@ -476,7 +470,6 @@ int main() {
         &shader_stages.stages[2],
         1);
 
-    //--- Line pipeline: C (matching msaa for GPL compatibility) ---
     FragmentLibDesc line_desc_c{
         .msaa_samples = vk_msaa_samples,
         .sample_shading_enable = vk::True,
@@ -499,7 +492,6 @@ int main() {
         vk_chosen_format,
         depth_format);
 
-    //--- Cleanup (shader modules only; library pipelines persist for linked pipeline) ---
     for (U64 i = 0; i < shader_stages.modules.size; i++) {
       vk_device.destroyShaderModule(shader_stages.modules[i].module);
     }
@@ -576,33 +568,11 @@ int main() {
                                                                         vertices,
                                                                         indices);
   vk::DeviceSize vk_swapchain_arena_checkpoint = vk_device_arena.offset;
-  {
-    LineVertex line_vertices[] = {
-        {{0.0f, 0.0f, 0.0f}, {1.0f, 0.0f, 0.0f, 1.0f}},
-        {{1.0f, 0.0f, 0.0f}, {1.0f, 0.0f, 0.0f, 1.0f}},
-        {{0.0f, 0.0f, 0.0f}, {0.0f, 1.0f, 0.0f, 1.0f}},
-        {{0.0f, 1.0f, 0.0f}, {0.0f, 1.0f, 0.0f, 1.0f}},
-        {{0.0f, 0.0f, 0.0f}, {0.0f, 0.0f, 1.0f, 1.0f}},
-        {{0.0f, 0.0f, 1.0f}, {0.0f, 0.0f, 1.0f, 1.0f}},
-    };
-    vk::DeviceSize buffer_size = sizeof(line_vertices);
-    auto [staging, staging_alloc] = vk_create_buffer(vk_phys_dev,
-                                                     vk_device,
-                                                     buffer_size,
-                                                     vk::BufferUsageFlagBits::eTransferSrc,
-                                                     &vk_host_arena);
-    MemoryCopy(staging_alloc.mapped, line_vertices, buffer_size);
-    auto [vb, vb_alloc] = vk_create_buffer(vk_phys_dev,
-                                           vk_device,
-                                           buffer_size,
-                                           vk::BufferUsageFlagBits::eVertexBuffer |
-                                           vk::BufferUsageFlagBits::eTransferDst,
-                                           &vk_device_arena);
-    vk_line_vertex_buffer = vb;
-    (void)vb_alloc;
-    vk_copy_buffer(vk_device, vk_command_pool, vk_graphics_queue, staging, vk_line_vertex_buffer, buffer_size);
-    vk_device.destroyBuffer(staging);
-  }
+  TransientBuffer debug_line_stream = vk_create_transient_buffer(vk_phys_dev,
+                                                                 vk_device,
+                                                                 &vk_host_arena,
+                                                                 kb(64),
+                                                                 vk::BufferUsageFlagBits::eVertexBuffer);
   // TODO: extract to create_uniform_descriptors(device, phys_dev, host_arena, tex_sampler, tex_image, ...) ->
   // {uniform_buffers, descriptor_pool, descriptor_sets, uniform_buffers_mapped}
   //~ Uniform Buffers + Descriptors
@@ -736,14 +706,7 @@ int main() {
       // TODO: trigger palette with ctrl p by defaulrt
       // TODO: m,ovement
 
-      //~ ImGui
-      {
-        imgui_new_frame();
-        debug_ui_palette_render(&palette_state);
-        debug_ui_debug_ui(&clock.report);
-      }
-
-      // TODO: extract to render_frame(vk_device, ...) -> bool (swapchain_needs_rebuild)
+      //--- Synchronization: wait for current_frame fence + acquire image ---
       vk_abort_if_error(vk_device.waitForFences(1, &vk_in_flight_fences[current_frame], VK_TRUE, UINT64_MAX));
 
       bool swapchain_needs_rebuild = false;
@@ -783,6 +746,8 @@ int main() {
         std::fprintf(stderr, "vkAcquireNextImageKHR failed: %d\n", vk_acquire_res);
         TRAP();
       }
+
+      //--- Image-in-flight wait + fence reset ---
       {
         if (vk_sc->images_in_flight[vk_image_index]) {
           vk_abort_if_error(
@@ -792,13 +757,100 @@ int main() {
       vk_sc->images_in_flight[vk_image_index] = vk_in_flight_fences[current_frame];
       vk_abort_if_error(vk_device.resetFences(1, &vk_in_flight_fences[current_frame]));
 
+      //--- State update: simulation, camera ---
+      {
+        if (!palette_state.open) {
+          if (window.key.held[GLFW_KEY_W])
+            move.x += 1.0f * key_speed;
+          if (window.key.held[GLFW_KEY_S])
+            move.x -= 1.0f * key_speed;
+
+          if (window.key.held[GLFW_KEY_D])
+            move.y += 1.0f * key_speed;
+          if (window.key.held[GLFW_KEY_A])
+            move.y -= 1.0f * key_speed;
+
+          if (window.key.held[GLFW_KEY_SPACE])
+            move.z += 1.0f * key_speed;
+          if (window.key.held[GLFW_KEY_LEFT_SHIFT])
+            move.z -= 1.0f * key_speed;
+
+          key_speed += 0.05f * static_cast<F32>(window.mouse.delta_scroll.y);
+          key_speed = clamp_bot(0.0005f, key_speed);
+        }
+        static float s_accumulated_time = 0.0f;
+        static auto s_prev_time = std::chrono::high_resolution_clock::now();
+        auto current_time = std::chrono::high_resolution_clock::now();
+        float dt = std::chrono::duration<float>(current_time - s_prev_time).count();
+        s_prev_time = current_time;
+
+
+        //~ Camera
+        constexpr F32 MOUSE_SENSITIVITY = 6.0f;
+        local_persist Camera camera = Camera::from_pos(glm::vec3(2.0f));
+        g_dbg_ctx.camera = &camera;
+        if (!paused) {
+          s_accumulated_time += dt;
+          Vec3 rot{
+              window.mouse.delta_pos.x * MOUSE_SENSITIVITY * dt,
+              window.mouse.delta_pos.y * MOUSE_SENSITIVITY * dt,
+              0.0f // roll
+          };
+          camera.transform(rot, move);
+        }
+
+        //--- Write UBO for current_frame ---
+        UniformBufferObject ubo{
+            .model = glm::rotate(glm::mat4(1.0f),
+                                 s_accumulated_time * glm::radians(90.0f),
+                                 glm::vec3(0.0f, 0.0f, 1.0f)),
+            .view = camera.view(),
+            .proj =
+            glm::perspective(glm::radians(45.0f),
+                             static_cast<float>(vk_swapchain_extent.width) / static_cast<float>(
+                               vk_swapchain_extent.height),
+                             0.1f,
+                             10.0f),
+        };
+        ubo.proj[1][1] *= -1;
+        MemoryCopy(vk_uniform_buffers_mapped[current_frame], &ubo, sizeof(ubo));
+      }
+
+      //--- Reset transient buffers for current_frame + generate debug line data ---
+      debug_line_stream.reset(current_frame);
+      Array line_vertices = {
+          LineVertex{{0.0f, 0.0f, 0.0f}, {1.0f, 0.0f, 0.0f, 1.0f}},
+          LineVertex{{1.0f, 0.0f, 0.0f}, {1.0f, 0.0f, 0.0f, 1.0f}},
+          LineVertex{{0.0f, 0.0f, 0.0f}, {0.0f, 1.0f, 0.0f, 1.0f}},
+          LineVertex{{0.0f, 1.0f, 0.0f}, {0.0f, 1.0f, 0.0f, 1.0f}},
+          LineVertex{{0.0f, 0.0f, 0.0f}, {0.0f, 0.0f, 1.0f, 1.0f}},
+          LineVertex{{0.0f, 0.0f, 1.0f}, {0.0f, 0.0f, 1.0f, 1.0f}},
+      };
+      TransientAlloc line_alloc = debug_line_stream.alloc(
+          current_frame,
+          line_vertices.byte_count(),
+          alignof(LineVertex));
+
+      MemoryCopy(line_alloc.mapped, line_vertices, sizeof(line_vertices));
+
+      //--- ImGui new frame + build UI ---
+      {
+        imgui_new_frame();
+        debug_ui_palette_render(&palette_state);
+        debug_ui_debug_ui(&clock.report);
+      }
+
+      //--- Command buffer: reset/begin ---
       vk::CommandBuffer vk_cmd = vk_command_buffers[current_frame];
       vk_abort_if_error(vk_cmd.reset());
       vk_abort_if_error(vk_cmd.begin({.flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit}));
 
+      vk::ImageLayout msaa_src = vk_sc->image_initialized[vk_image_index]
+                                   ? vk::ImageLayout::eColorAttachmentOptimal
+                                   : vk::ImageLayout::eUndefined;
       vk_transition_image_layout(vk_cmd,
                                  vk_sc->msaa_images[vk_image_index],
-                                 vk::ImageLayout::eUndefined,
+                                 msaa_src,
                                  vk::ImageLayout::eColorAttachmentOptimal,
                                  {},
                                  vk::AccessFlagBits2::eColorAttachmentWrite,
@@ -806,9 +858,12 @@ int main() {
                                  vk::PipelineStageFlagBits2::eColorAttachmentOutput,
                                  vk::ImageAspectFlagBits::eColor,
                                  1);
+      vk::ImageLayout swapchain_src = vk_sc->image_initialized[vk_image_index]
+                                        ? vk::ImageLayout::ePresentSrcKHR
+                                        : vk::ImageLayout::eUndefined;
       vk_transition_image_layout(vk_cmd,
                                  vk_sc->images[vk_image_index],
-                                 vk::ImageLayout::eUndefined,
+                                 swapchain_src,
                                  vk::ImageLayout::eColorAttachmentOptimal,
                                  {},
                                  vk::AccessFlagBits2::eColorAttachmentWrite,
@@ -868,15 +923,20 @@ int main() {
                                 vk_descriptor_sets[current_frame],
                                 nullptr);
       vk_cmd.drawIndexed(indices.size, 1, 0, 0, 0);
+
+
       vk_cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, vk_line_pipeline);
-      vk_cmd.setLineWidth(5.0f);
-      vk_cmd.bindVertexBuffers(0, vk_line_vertex_buffer, {0});
+      vk_cmd.setLineWidth(g_dbg_ctx.line_width);
+      vk_cmd.bindVertexBuffers(0,
+                               line_alloc.buffer,
+                               {line_alloc.offset
+                               });
       vk_cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics,
                                 vk_pipeline_layout,
                                 0,
                                 vk_descriptor_sets[current_frame],
                                 nullptr);
-      vk_cmd.draw(6, 1, 0, 0);
+      vk_cmd.draw(line_vertices.size(), 1, 0, 0);
       vk_cmd.endRendering();
 
       imgui_render(vk_cmd, vk_sc->image_views[vk_image_index], vk_swapchain_extent);
@@ -895,62 +955,6 @@ int main() {
       vk_sc->image_initialized[vk_image_index] = true;
       vk_abort_if_error(vk_cmd.end());
 
-      //~ State update
-      {
-        if (!palette_state.open) {
-          if (window.key.held[GLFW_KEY_W])
-            move.x += 1.0f * key_speed;
-          if (window.key.held[GLFW_KEY_S])
-            move.x -= 1.0f * key_speed;
-
-          if (window.key.held[GLFW_KEY_D])
-            move.y += 1.0f * key_speed;
-          if (window.key.held[GLFW_KEY_A])
-            move.y -= 1.0f * key_speed;
-
-          if (window.key.held[GLFW_KEY_SPACE])
-            move.z += 1.0f * key_speed;
-          if (window.key.held[GLFW_KEY_LEFT_SHIFT])
-            move.z -= 1.0f * key_speed;
-
-          key_speed += 0.05f * static_cast<F32>(window.mouse.delta_scroll.y);
-          key_speed = clamp_bot(0.0005f, key_speed);
-        }
-        static float s_accumulated_time = 0.0f;
-        static auto s_prev_time = std::chrono::high_resolution_clock::now();
-        auto current_time = std::chrono::high_resolution_clock::now();
-        float dt = std::chrono::duration<float>(current_time - s_prev_time).count();
-        s_prev_time = current_time;
-
-
-        //~ Camera
-        constexpr F32 MOUSE_SENSITIVITY = 6.0f;
-        local_persist Camera camera = Camera::from_pos(glm::vec3(2.0f));
-        g_dbg_ctx.camera = &camera;
-        if (!paused) {
-          s_accumulated_time += dt;
-          Vec3 rot{
-              window.mouse.delta_pos.x * MOUSE_SENSITIVITY * dt,
-              window.mouse.delta_pos.y * MOUSE_SENSITIVITY * dt,
-              0.0f // roll
-          };
-          camera.transform(rot, move);
-        }
-        UniformBufferObject ubo{
-            .model = glm::rotate(glm::mat4(1.0f),
-                                 s_accumulated_time * glm::radians(90.0f),
-                                 glm::vec3(0.0f, 0.0f, 1.0f)),
-            .view = camera.view(),
-            .proj =
-            glm::perspective(glm::radians(45.0f),
-                             static_cast<float>(vk_swapchain_extent.width) / static_cast<float>(
-                               vk_swapchain_extent.height),
-                             0.1f,
-                             10.0f),
-        };
-        ubo.proj[1][1] *= -1;
-        MemoryCopy(vk_uniform_buffers_mapped[current_frame], &ubo, sizeof(ubo));
-      }
       //~ vk submit
 
       vk::PipelineStageFlags vk_wait_stage = vk::PipelineStageFlagBits::eColorAttachmentOutput;
@@ -1024,9 +1028,9 @@ int main() {
     vk_device.destroyDescriptorPool(vk_descriptor_pool);
     for (U64 i = 0; i < MAX_FRAMES_IN_FLIGHT; ++i)
       vk_device.destroyBuffer(vk_uniform_buffers[i]);
+    vk_destroy_transient_buffer(vk_device, &debug_line_stream);
     vk_device.destroyBuffer(vk_index_buffer);
     vk_device.destroyBuffer(vk_vertex_buffer);
-    vk_device.destroyBuffer(vk_line_vertex_buffer);
     vk_device.destroyPipeline(vk_graphics_pipeline);
     vk_device.destroyPipeline(vk_line_pipeline);
     vk_device.destroyPipeline(vk_output_lib);

@@ -328,7 +328,7 @@ internal void vk_destroy_gpu_arena(vk::Device device, VKGpuArena *arena) {
     device.unmapMemory(arena->memory);
   if (arena->memory)
     device.freeMemory(arena->memory);
-  arena = {};
+  *arena = {};
 }
 
 internal VKDepthResources vk_create_depth_resources(vk::PhysicalDevice vk_phys_dev,
@@ -745,7 +745,8 @@ vk_create_logical_device(vk::PhysicalDevice phys_dev, VKQueueFamilyIndices queue
         .queueFamilyIndex = queue_indices.present_index, .queueCount = 1, .pQueuePriorities = &queue_priority,
     };
   }
-  Array device_extensions = {VK_KHR_SWAPCHAIN_EXTENSION_NAME, VK_KHR_PIPELINE_LIBRARY_EXTENSION_NAME, VK_EXT_GRAPHICS_PIPELINE_LIBRARY_EXTENSION_NAME};
+  Array device_extensions = {VK_KHR_SWAPCHAIN_EXTENSION_NAME, VK_KHR_PIPELINE_LIBRARY_EXTENSION_NAME,
+                             VK_EXT_GRAPHICS_PIPELINE_LIBRARY_EXTENSION_NAME};
   PhysicalDeviceFeatures features = enable_phys_dev_features(phys_dev);
   vk::DeviceCreateInfo dev_info{
       .pNext = &features.get<vk::PhysicalDeviceFeatures2>(),
@@ -1067,22 +1068,23 @@ internal vk::Pipeline create_gpl(vk::Device vk_device,
 }
 
 internal vk::DescriptorSetLayout create_descriptor_set_layout(
-    vk::Device device, U32 binding_count, vk::DescriptorSetLayoutBinding const* bindings)
-{
+    vk::Device device,
+    U32 binding_count,
+    vk::DescriptorSetLayoutBinding const *bindings) {
   vk::DescriptorSetLayoutCreateInfo ci{.bindingCount = binding_count, .pBindings = bindings};
   return vk_abort_if_error(device.createDescriptorSetLayout(ci));
 }
 
 internal vk::PipelineLayout create_pipeline_layout(
-    vk::Device device, vk::DescriptorSetLayout set_layout)
-{
+    vk::Device device,
+    vk::DescriptorSetLayout set_layout) {
   vk::PipelineLayoutCreateInfo ci{.setLayoutCount = 1, .pSetLayouts = &set_layout};
   return vk_abort_if_error(device.createPipelineLayout(ci));
 }
 
 internal vk::Pipeline create_vertex_input_library(
-    vk::Device device, VertexInputLibDesc const& desc)
-{
+    vk::Device device,
+    VertexInputLibDesc const &desc) {
   vk::PipelineVertexInputStateCreateInfo vertex_input{
       .vertexBindingDescriptionCount = static_cast<U32>(desc.bindings.size),
       .pVertexBindingDescriptions = desc.bindings,
@@ -1097,15 +1099,18 @@ internal vk::Pipeline create_vertex_input_library(
       .pVertexInputState = &vertex_input,
       .pInputAssemblyState = &input_assembly,
   };
-  return create_gpl(device, nullptr,
-      vk::GraphicsPipelineLibraryFlagBitsEXT::eVertexInputInterface, ci);
+  return create_gpl(device,
+                    nullptr,
+                    vk::GraphicsPipelineLibraryFlagBitsEXT::eVertexInputInterface,
+                    ci);
 }
 
 internal vk::Pipeline create_pre_raster_library(
-    vk::Device device, vk::PipelineLayout layout,
-    PreRasterLibDesc const& desc,
-    vk::PipelineShaderStageCreateInfo const* stages, U32 stage_count)
-{
+    vk::Device device,
+    vk::PipelineLayout layout,
+    PreRasterLibDesc const &desc,
+    vk::PipelineShaderStageCreateInfo const *stages,
+    U32 stage_count) {
   vk::PipelineViewportStateCreateInfo viewport_state{
       .viewportCount = desc.viewport_count,
       .scissorCount = desc.scissor_count,
@@ -1120,7 +1125,7 @@ internal vk::Pipeline create_pre_raster_library(
       .lineWidth = desc.line_width,
   };
   vk::DynamicState default_states[] = {vk::DynamicState::eViewport, vk::DynamicState::eScissor};
-  auto* states = desc.dynamic_states ? desc.dynamic_states : default_states;
+  auto *states = desc.dynamic_states ? desc.dynamic_states : default_states;
   U32 state_count = desc.dynamic_states ? desc.dynamic_state_count : 2;
   vk::PipelineDynamicStateCreateInfo dynamic_state{
       .dynamicStateCount = state_count,
@@ -1142,15 +1147,18 @@ internal vk::Pipeline create_pre_raster_library(
     ci.pTessellationState = &tess_state;
   }
 
-  return create_gpl(device, nullptr,
-      vk::GraphicsPipelineLibraryFlagBitsEXT::ePreRasterizationShaders, ci);
+  return create_gpl(device,
+                    nullptr,
+                    vk::GraphicsPipelineLibraryFlagBitsEXT::ePreRasterizationShaders,
+                    ci);
 }
 
 internal vk::Pipeline create_fragment_library(
-    vk::Device device, vk::PipelineLayout layout,
-    FragmentLibDesc const& desc,
-    vk::PipelineShaderStageCreateInfo const* stages, U32 stage_count)
-{
+    vk::Device device,
+    vk::PipelineLayout layout,
+    FragmentLibDesc const &desc,
+    vk::PipelineShaderStageCreateInfo const *stages,
+    U32 stage_count) {
   vk::PipelineDepthStencilStateCreateInfo depth_stencil{
       .depthTestEnable = desc.depth_test,
       .depthWriteEnable = desc.depth_write,
@@ -1174,13 +1182,15 @@ internal vk::Pipeline create_fragment_library(
       .pDepthStencilState = &depth_stencil,
       .layout = layout,
   };
-  return create_gpl(device, nullptr,
-      vk::GraphicsPipelineLibraryFlagBitsEXT::eFragmentShader, ci);
+  return create_gpl(device,
+                    nullptr,
+                    vk::GraphicsPipelineLibraryFlagBitsEXT::eFragmentShader,
+                    ci);
 }
 
 internal vk::Pipeline create_fragment_output_library(
-    vk::Device device, FragmentOutputLibDesc const& desc)
-{
+    vk::Device device,
+    FragmentOutputLibDesc const &desc) {
   vk::PipelineColorBlendAttachmentState color_blend_attachment{
       .blendEnable = desc.blend_enable,
       .colorWriteMask = vk::ColorComponentFlagBits::eR | vk::ColorComponentFlagBits::eG |
@@ -1207,15 +1217,19 @@ internal vk::Pipeline create_fragment_output_library(
       .pMultisampleState = &multisampling,
       .pColorBlendState = &color_blending,
   };
-  return create_gpl(device, nullptr,
-      vk::GraphicsPipelineLibraryFlagBitsEXT::eFragmentOutputInterface, ci);
+  return create_gpl(device,
+                    nullptr,
+                    vk::GraphicsPipelineLibraryFlagBitsEXT::eFragmentOutputInterface,
+                    ci);
 }
 
 internal vk::Pipeline create_linked_pipeline(
-    vk::Device device, vk::PipelineLayout layout,
-    U32 library_count, vk::Pipeline const* libraries,
-    vk::Format color_format, vk::Format depth_format)
-{
+    vk::Device device,
+    vk::PipelineLayout layout,
+    U32 library_count,
+    vk::Pipeline const *libraries,
+    vk::Format color_format,
+    vk::Format depth_format) {
   vk::PipelineRenderingCreateInfo prci{
       .colorAttachmentCount = 1,
       .pColorAttachmentFormats = &color_format,
@@ -1231,4 +1245,28 @@ internal vk::Pipeline create_linked_pipeline(
       .layout = layout,
   };
   return vk_abort_if_error(device.createGraphicsPipeline(nullptr, ci));
+}
+
+TransientBuffer vk_create_transient_buffer(vk::PhysicalDevice phys_dev,
+                                           vk::Device device,
+                                           VKGpuArena *arena,
+                                           U64 size_per_frame,
+                                           vk::BufferUsageFlags usage) {
+  TransientBuffer tb{};
+  tb.arena = arena;
+  tb.size_per_frame = size_per_frame;
+
+  for (U32 i = 0; i < MAX_FRAMES_IN_FLIGHT; ++i) {
+    auto [buffer, alloc] = vk_create_buffer(phys_dev, device, size_per_frame, usage, arena);
+    tb.frames[i].buffer = buffer;
+    tb.frames[i].mapped = alloc.mapped;
+    tb.frames[i].used = 0;
+  }
+  return tb;
+}
+
+void vk_destroy_transient_buffer(vk::Device device, TransientBuffer *tb) {
+  for (U32 i = 0; i < MAX_FRAMES_IN_FLIGHT; ++i) {
+    device.destroyBuffer(tb->frames[i].buffer);
+  }
 }

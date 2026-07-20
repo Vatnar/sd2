@@ -83,3 +83,7 @@ struct PaletteState {
 internal void debug_ui_palette_init(PaletteState *state, DynArray<PaletteAction> actions);
 internal void debug_ui_palette_toggle(PaletteState *state);
 internal void debug_ui_palette_render(PaletteState *state);
+internal void debug_ui_debug_ui(TimeReport *report);
+internal void load_debug_ui_state();
+
+internal void save_debug_ui_state();

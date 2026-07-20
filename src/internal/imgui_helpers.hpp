@@ -18,3 +18,7 @@ internal void imgui_render(vk::CommandBuffer cmd, vk::ImageView target_image_vie
 internal void imgui_shutdown();
 internal void imgui_set_min_image_count(U32 count);
 internal void imgui_setup_theme();
+
+// ui helpers
+
+internal void imgui_draw_glm_vec32f(const char *label, glm::vec3 vec);

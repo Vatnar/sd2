@@ -11,6 +11,7 @@ static void *imgui_alloc(size_t size, void *) {
 #endif
   return ptr;
 }
+
 static void imgui_free(void *ptr, void *) {
 #ifdef IMGUI_TRACE_ALLOC
   fprintf(stderr, "[imgui] free %p\n", ptr);
@@ -95,21 +96,30 @@ internal void imgui_set_min_image_count(U32 count) {
 internal void imgui_setup_theme() {
   ImGuiStyle &s = ImGui::GetStyle();
   ImVec4 *c = s.Colors;
-  c[ImGuiCol_WindowBg]       = {0.04f, 0.04f, 0.04f, 1.00f};
-  c[ImGuiCol_FrameBg]        = {0.07f, 0.07f, 0.07f, 1.00f};
+  c[ImGuiCol_WindowBg] = {0.04f, 0.04f, 0.04f, 1.00f};
+  c[ImGuiCol_FrameBg] = {0.07f, 0.07f, 0.07f, 1.00f};
   c[ImGuiCol_FrameBgHovered] = {0.11f, 0.11f, 0.11f, 1.00f};
-  c[ImGuiCol_Text]           = {0.88f, 0.88f, 0.88f, 1.00f};
-  c[ImGuiCol_TextDisabled]   = {0.35f, 0.35f, 0.35f, 1.00f};
-  c[ImGuiCol_Header]         = {0.18f, 0.18f, 0.18f, 1.00f};
-  c[ImGuiCol_HeaderHovered]  = {0.24f, 0.24f, 0.24f, 1.00f};
-  c[ImGuiCol_Border]         = {0.08f, 0.08f, 0.08f, 1.00f};
-  c[ImGuiCol_PopupBg]        = {0.04f, 0.04f, 0.04f, 1.00f};
-  c[ImGuiCol_ScrollbarBg]    = {0.03f, 0.03f, 0.03f, 1.00f};
-  c[ImGuiCol_ScrollbarGrab]  = {0.15f, 0.15f, 0.15f, 1.00f};
-  c[ImGuiCol_Button]         = {0.07f, 0.07f, 0.07f, 1.00f};
-  c[ImGuiCol_ButtonHovered]  = {0.15f, 0.15f, 0.15f, 1.00f};
-  c[ImGuiCol_SliderGrab]     = {0.35f, 0.35f, 0.35f, 1.00f};
-  s.FrameRounding  = 2.0f;
+  c[ImGuiCol_Text] = {0.88f, 0.88f, 0.88f, 1.00f};
+  c[ImGuiCol_TextDisabled] = {0.35f, 0.35f, 0.35f, 1.00f};
+  c[ImGuiCol_Header] = {0.18f, 0.18f, 0.18f, 1.00f};
+  c[ImGuiCol_HeaderHovered] = {0.24f, 0.24f, 0.24f, 1.00f};
+  c[ImGuiCol_Border] = {0.08f, 0.08f, 0.08f, 1.00f};
+  c[ImGuiCol_PopupBg] = {0.04f, 0.04f, 0.04f, 1.00f};
+  c[ImGuiCol_ScrollbarBg] = {0.03f, 0.03f, 0.03f, 1.00f};
+  c[ImGuiCol_ScrollbarGrab] = {0.15f, 0.15f, 0.15f, 1.00f};
+  c[ImGuiCol_Button] = {0.07f, 0.07f, 0.07f, 1.00f};
+  c[ImGuiCol_ButtonHovered] = {0.15f, 0.15f, 0.15f, 1.00f};
+  c[ImGuiCol_SliderGrab] = {0.35f, 0.35f, 0.35f, 1.00f};
+  s.FrameRounding = 2.0f;
   s.WindowRounding = 4.0f;
-  s.GrabRounding   = 2.0f;
+  s.GrabRounding = 2.0f;
+}
+
+// TODO, rather have a tostring
+internal void imgui_draw_glm_vec32f(const char *label, glm::vec3 vec) {
+  ImGui::Text("%s: { %.2f, %.2f, %.2f }",
+              label,
+              vec.x,
+              vec.y,
+              vec.z);
 }

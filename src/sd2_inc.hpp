@@ -33,3 +33,4 @@
 #include "internal/vk_helpers.hpp"
 #include "internal/base_arena.hpp"
 #include "internal/base_array.hpp"
+#include "internal/base_string.hpp"

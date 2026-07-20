@@ -26,17 +26,40 @@ struct DebugCtx {
   bool *debug_show_last_command{};
   bool *debug_show_cursor_info{};
   bool *debug_show_timings{};
+  bool *debug_show_camera_info{};
+  Camera *camera;
+  bool *debug_show_scroll_info;
 };
 
 static DebugCtx g_dbg_ctx{};
 
-struct Vertex {
+struct LineVertex {
+  glm::vec3 pos;
+  glm::vec4 color;
+
+  static constexpr vk::VertexInputBindingDescription get_binding_description() {
+    return {.binding = 0, .stride = sizeof(LineVertex), .inputRate = vk::VertexInputRate::eVertex};
+  }
+
+  static constexpr Array<vk::VertexInputAttributeDescription, 2> get_attribute_descriptions() {
+    return {
+        {
+            vk::VertexInputAttributeDescription{.location = 0, .binding = 0, .format = vk::Format::eR32G32B32Sfloat,
+                                                .offset = offsetof(LineVertex, pos)},
+            vk::VertexInputAttributeDescription{.location = 1, .binding = 0, .format = vk::Format::eR32G32B32A32Sfloat,
+                                                .offset = offsetof(LineVertex, color)}
+        }
+    };
+  }
+};
+
+struct TextureVertex {
   glm::vec3 pos;
   glm::vec3 color;
   glm::vec2 tex_coord;
 
   static constexpr vk::VertexInputBindingDescription get_binding_description() {
-    return {.binding = 0, .stride = sizeof(Vertex), .inputRate = vk::VertexInputRate::eVertex};
+    return {.binding = 0, .stride = sizeof(TextureVertex), .inputRate = vk::VertexInputRate::eVertex};
   }
 
   static constexpr Array<vk::VertexInputAttributeDescription, 3> get_attribute_descriptions() {
@@ -45,27 +68,27 @@ struct Vertex {
             vk::VertexInputAttributeDescription{.location = 0,
                                                 .binding = 0,
                                                 .format = vk::Format::eR32G32B32Sfloat,
-                                                .offset = offsetof(Vertex, pos)},
+                                                .offset = offsetof(TextureVertex, pos)},
             vk::VertexInputAttributeDescription{.location = 1,
                                                 .binding = 0,
                                                 .format = vk::Format::eR32G32B32Sfloat,
-                                                .offset = offsetof(Vertex, color)},
+                                                .offset = offsetof(TextureVertex, color)},
             vk::VertexInputAttributeDescription{.location = 2,
                                                 .binding = 0,
                                                 .format = vk::Format::eR32G32Sfloat,
-                                                .offset = offsetof(Vertex, tex_coord)},
+                                                .offset = offsetof(TextureVertex, tex_coord)},
         }
     };
   }
 
-  bool operator==(Vertex const &other) const {
+  bool operator==(TextureVertex const &other) const {
     return pos == other.pos && color == other.color && tex_coord == other.tex_coord;
   }
 };
 
 template<>
-struct std::hash<Vertex> {
-  size_t operator()(Vertex const &vertex) const noexcept {
+struct std::hash<TextureVertex> {
+  size_t operator()(TextureVertex const &vertex) const noexcept {
     return ((hash<glm::vec3>()(vertex.pos) ^ (hash<glm::vec3>()(vertex.color) << 1)) >> 1) ^
            (hash<glm::vec2>()(vertex.tex_coord) << 1);
   }
@@ -83,7 +106,7 @@ constexpr uint32_t HEIGHT = 600;
 constexpr char const *MODEL_PATH = "assets/models/viking_room.obj";
 constexpr char const *TEXTURE_PATH = "assets/textures/viking_room.png";
 
-internal std::tuple<DynArray<Vertex>, DynArray<U32>> load_obj(Arena *arena, const char *obj_path);
+internal std::tuple<DynArray<TextureVertex>, DynArray<U32>> load_obj(Arena *arena, const char *obj_path);
 
 //~ cpp
 #include "internal/base_arena.cpp"
@@ -159,6 +182,8 @@ int main() {
       .width = WIDTH,
       .height = HEIGHT,
   };
+
+  load_debug_ui_state();
 
   F64 target_frame_ms = 1000.0 / 60;
   bool monitor_detected = false;
@@ -307,7 +332,9 @@ int main() {
                                                    PaletteAction::toggle<^^DebugCtx::debug_show_window>(g_dbg_ctx),
                                                    PaletteAction::toggle<^^
                                                      DebugCtx::debug_show_last_command>(g_dbg_ctx),
-                                                   PaletteAction::toggle<^^DebugCtx::debug_show_timings>(g_dbg_ctx)
+                                                   PaletteAction::toggle<^^DebugCtx::debug_show_timings>(g_dbg_ctx),
+                                                   PaletteAction::toggle<^^DebugCtx::debug_show_camera_info>(g_dbg_ctx),
+                                                   PaletteAction::toggle<^^DebugCtx::debug_show_scroll_info>(g_dbg_ctx),
                                                });
   debug_ui_palette_init(&palette_state,
                         pa
@@ -317,7 +344,6 @@ int main() {
   // ds_layout}
   //~ Shader + Pipeline + Descriptor Set Layout
 
-  vk::ShaderModule vk_shader_module{};
   vk::PipelineLayout vk_pipeline_layout{};
   vk::Pipeline vk_graphics_pipeline{};
   vk::DescriptorSetLayout vk_descriptor_set_layout{};
@@ -325,27 +351,31 @@ int main() {
 
   vk::ImageView vk_depth_image_view{};
   {
-    // TODO: extract to create_shader_module(device, arena, path) -> ShaderModule
-    //~ Shader Module
-    String8 shader_code = read_file(app_arena, str8_lit("assets/shaders/shader.spv"));
-    vk::ShaderModuleCreateInfo module_info{.codeSize = shader_code.size * sizeof(U8),
-                                           .pCode = reinterpret_cast<U32 *>(shader_code.str)};
-    vk_shader_module = vk_abort_if_error(vk_device.createShaderModule(module_info));
+    Temp scratch = scratch_begin(0, 0);
+    auto shader_stage_descriptions = DynArray<VKShaderStageDesc>::from_init(scratch.arena,
+                                                                            {
+                                                                                VKShaderStageDesc{
+                                                                                    .stage =
+                                                                                    vk::ShaderStageFlagBits::eVertex,
+                                                                                    .entrypoint_name = str8_lit(
+                                                                                        "vert_main"),
+                                                                                    .file_name = str8_lit(
+                                                                                        "assets/shaders/shader.spv")},
+                                                                                VKShaderStageDesc{
+                                                                                    .stage =
+                                                                                    vk::ShaderStageFlagBits::eFragment,
+                                                                                    .entrypoint_name = str8_lit(
+                                                                                        "frag_main"),
+                                                                                    .file_name = str8_lit(
+                                                                                        "assets/shaders/shader.spv")}
+                                                                            });
+    auto shader_stages = build_shader_stages(scratch.arena,
+                                             vk_device,
+                                             &shader_stage_descriptions);
 
-    //~ Pipeline state infos
-    vk::PipelineShaderStageCreateInfo vert_shader_stage_info{.stage = vk::ShaderStageFlagBits::eVertex,
-                                                             .module = vk_shader_module,
-                                                             .pName = "vert_main"};
-    vk::PipelineShaderStageCreateInfo frag_shader_stage_info{.stage = vk::ShaderStageFlagBits::eFragment,
-                                                             .module = vk_shader_module,
-                                                             .pName = "frag_main"};
 
-    Array shader_stages = {vert_shader_stage_info, frag_shader_stage_info};
-    Array dynamic_states = {vk::DynamicState::eViewport, vk::DynamicState::eScissor};
-    vk::PipelineDynamicStateCreateInfo dynamic_state{.dynamicStateCount = 2, .pDynamicStates = dynamic_states};
-
-    auto binding_descriptions = Vertex::get_binding_description();
-    auto attribute_descriptions = Vertex::get_attribute_descriptions();
+    auto binding_descriptions = TextureVertex::get_binding_description();
+    auto attribute_descriptions = TextureVertex::get_attribute_descriptions();
 
     vk::PipelineVertexInputStateCreateInfo vertex_input_info{
         .vertexBindingDescriptionCount = 1,
@@ -414,9 +444,12 @@ int main() {
                                                       .pushConstantRangeCount = 0};
     vk_pipeline_layout = vk_abort_if_error(vk_device.createPipelineLayout(pipeline_layout_info));
 
+    Array dynamic_states = {vk::DynamicState::eViewport, vk::DynamicState::eScissor};
+    vk::PipelineDynamicStateCreateInfo dynamic_state{.dynamicStateCount = 2, .pDynamicStates = dynamic_states};
+
     vk::GraphicsPipelineCreateInfo gpci{
-        .stageCount = 2,
-        .pStages = shader_stages,
+        .stageCount = static_cast<U32>(shader_stages.stages.size),
+        .pStages = shader_stages.stages,
         .pVertexInputState = &vertex_input_info,
         .pInputAssemblyState = &input_assembly,
         .pViewportState = &viewport_state,
@@ -439,6 +472,10 @@ int main() {
         vk_device.createGraphicsPipeline(nullptr, pipeline_create_info_chain.get<vk::GraphicsPipelineCreateInfo>()));
     U64 pipe_cycles = PROFILE_END();
     printf("Pipeline creation: %lu cycles\n", pipe_cycles);
+    for (U64 i = 0; i < shader_stages.modules.size; i++) {
+      vk_device.destroyShaderModule(shader_stages.modules[i].module);
+    }
+    scratch.end();
   }
 
   //~ Load model
@@ -458,7 +495,7 @@ int main() {
                                        VKGpuArena *device_arena,
                                        vk::CommandPool command_pool,
                                        vk::Queue graphics_queue,
-                                       DynArray<Vertex> vertices,
+                                       DynArray<TextureVertex> vertices,
                                        DynArray<U32> indices) -> std::tuple<vk::Buffer, vk::Buffer> {
     vk::Buffer vertex_buffer{}, index_buffer{};
     {
@@ -596,9 +633,7 @@ int main() {
     FrameClock clock{.target_ms = target_frame_ms};
     g_dbg_ctx.clock = &clock;
     while (!glfwWindowShouldClose(window.glfw_window)) {
-      F32 move_up = 0.0f;
-      F32 move_right = 0.0f;
-      F32 move_forward = 0.0f;
+      Vec3<F32> move{};
       local_persist F32 key_speed = 0.1f;
       clock.start();
       frame_arena->clear();
@@ -609,7 +644,7 @@ int main() {
         handle_key_input(&window.key);
         handle_mouse_input(&window.mouse);
       }
-      if ((window.key.held[GLFW_KEY_LEFT_CONTROL] || window.key.pressed[GLFW_KEY_LEFT_CONTROL]) && window.key.pressed[
+      if (window.key.held[GLFW_KEY_LEFT_CONTROL] && window.key.pressed[
             GLFW_KEY_P]) {
         debug_ui_palette_toggle(&palette_state);
       }
@@ -760,6 +795,7 @@ int main() {
       };
       vk_cmd.beginRendering(vk_rendering_info);
 
+      //~ Render
       vk_cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, vk_graphics_pipeline);
       vk_cmd.setViewport(0,
                          vk::Viewport(0.0f,
@@ -795,22 +831,23 @@ int main() {
       vk_sc->image_initialized[vk_image_index] = true;
       vk_abort_if_error(vk_cmd.end());
 
+      //~ State update
       {
         if (!palette_state.open) {
-          if (window.key.pressed[GLFW_KEY_SPACE] || window.key.held[GLFW_KEY_SPACE])
-            move_up += 1.0f * key_speed;
-          if (window.key.pressed[GLFW_KEY_LEFT_SHIFT] || window.key.held[GLFW_KEY_LEFT_SHIFT])
-            move_up -= 1.0f * key_speed;
+          if (window.key.held[GLFW_KEY_W])
+            move.x += 1.0f * key_speed;
+          if (window.key.held[GLFW_KEY_S])
+            move.x -= 1.0f * key_speed;
 
-          if (window.key.pressed[GLFW_KEY_W] || window.key.held[GLFW_KEY_W])
-            move_forward += 1.0f * key_speed;
-          if (window.key.pressed[GLFW_KEY_S] || window.key.held[GLFW_KEY_S])
-            move_forward -= 1.0f * key_speed;
+          if (window.key.held[GLFW_KEY_D])
+            move.y += 1.0f * key_speed;
+          if (window.key.held[GLFW_KEY_A])
+            move.y -= 1.0f * key_speed;
 
-          if (window.key.pressed[GLFW_KEY_D] || window.key.held[GLFW_KEY_D])
-            move_right += 1.0f * key_speed;
-          if (window.key.pressed[GLFW_KEY_A] || window.key.held[GLFW_KEY_A])
-            move_right -= 1.0f * key_speed;
+          if (window.key.held[GLFW_KEY_SPACE])
+            move.z += 1.0f * key_speed;
+          if (window.key.held[GLFW_KEY_LEFT_SHIFT])
+            move.z -= 1.0f * key_speed;
 
           key_speed += 0.05f * static_cast<F32>(window.mouse.delta_scroll.y);
           key_speed = clamp_bot(0.0005f, key_speed);
@@ -820,46 +857,26 @@ int main() {
         auto current_time = std::chrono::high_resolution_clock::now();
         float dt = std::chrono::duration<float>(current_time - s_prev_time).count();
         s_prev_time = current_time;
-        //~ State update
 
-        static glm::vec3 camera_pos = glm::vec3(2.0f);
-        static glm::vec3 world_up = glm::vec3(0.0f, 0.0f, 1.0f);
 
-        // intial direction
-        static glm::vec3 camera_front = glm::normalize(glm::vec3(0.0f) - camera_pos);
-
+        //~ Camera
         constexpr F32 MOUSE_SENSITIVITY = 6.0f;
-        static F32 pitch = glm::degrees(glm::asin(camera_front.z));
-        static F32 yaw = glm::degrees(glm::atan(camera_front.y, camera_front.x));
-
+        local_persist Camera camera = Camera::from_pos(glm::vec3(2.0f));
+        g_dbg_ctx.camera = &camera;
         if (!paused) {
-          yaw -= window.mouse.delta_pos.x * MOUSE_SENSITIVITY * dt;
-          pitch -= window.mouse.delta_pos.y * MOUSE_SENSITIVITY * dt;
-          pitch = clamp(-89.9f, pitch, 89.9f);
-        }
-
-        glm::vec3 front;
-        front.x = cos(glm::radians(yaw)) * cos(glm::radians(pitch));
-        front.y = sin(glm::radians(yaw)) * cos(glm::radians(pitch));
-        front.z = sin(glm::radians(pitch));
-        camera_front = glm::normalize(front);
-
-        glm::vec3 camera_right = glm::normalize(glm::cross(camera_front, world_up));
-        glm::vec3 camera_up = glm::normalize(glm::cross(camera_right, camera_front));
-
-        if (!paused) {
-          camera_pos += camera_front * move_forward;
-          camera_pos += camera_right * move_right;
-          camera_pos += camera_up * move_up;
-        }
-        glm::mat4 view_matrix = glm::lookAt(camera_pos, camera_pos + camera_front, world_up);
-        if (!paused)
           s_accumulated_time += dt;
+          Vec3 rot{
+              window.mouse.delta_pos.x * MOUSE_SENSITIVITY * dt,
+              window.mouse.delta_pos.y * MOUSE_SENSITIVITY * dt,
+              0.0f // roll
+          };
+          camera.transform(rot, move);
+        }
         UniformBufferObject ubo{
             .model = glm::rotate(glm::mat4(1.0f),
                                  s_accumulated_time * glm::radians(90.0f),
                                  glm::vec3(0.0f, 0.0f, 1.0f)),
-            .view = view_matrix,
+            .view = camera.view(),
             .proj =
             glm::perspective(glm::radians(45.0f),
                              static_cast<float>(vk_swapchain_extent.width) / static_cast<float>(
@@ -950,7 +967,6 @@ int main() {
     vk_device.destroyDescriptorSetLayout(vk_descriptor_set_layout);
     vk_device.destroyImageView(vk_depth_image_view);
     vk_device.destroyImage(vk_depth_image);
-    vk_device.destroyShaderModule(vk_shader_module);
     vk_device.destroySampler(vk_sampler);
     vk_destroy_texture(vk_device, &vk_tex);
     vk_device.destroyCommandPool(vk_command_pool);
@@ -992,6 +1008,7 @@ int main() {
     arena_release(app_arena);
     thread_ctx_release();
   }
+  save_debug_ui_state();
   return
       0;
 }

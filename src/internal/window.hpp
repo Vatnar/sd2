@@ -1,4 +1,5 @@
 #pragma once
+#include "base_string.hpp"
 
 struct AppParams {
   String8 name{};
@@ -23,12 +24,12 @@ struct Mouse {
   BitSet<GLFW_MOUSE_BUTTON_LAST> previous{};
   BitSet<GLFW_MOUSE_BUTTON_LAST> current{};
 
-  Vec2<F64> current_pos{};
-  Vec2<F64> previous_pos{};
-  Vec2<F64> delta_pos{};
+  Vec2<F32> current_pos{};
+  Vec2<F32> previous_pos{};
+  Vec2<F32> delta_pos{};
 
-  Vec2<F64> current_scroll{};
-  Vec2<F64> delta_scroll{};
+  Vec2<F32> current_scroll{};
+  Vec2<F32> delta_scroll{};
 };
 
 struct AppWindow {
@@ -53,7 +54,7 @@ struct AppWindow {
 
   static void dispatch_scroll(GLFWwindow *glfw_window, F64 xoffset, F64 yoffset) {
     AppWindow *window = static_cast<AppWindow *>(glfwGetWindowUserPointer(glfw_window));
-    window->mouse.current_scroll += {.x = xoffset, .y = yoffset};
+    window->mouse.current_scroll += {.x = static_cast<F32>(xoffset), .y = static_cast<F32>(yoffset)};
   }
 
   static void dispatch_close(GLFWwindow *glfw_window) {
@@ -89,7 +90,7 @@ struct AppWindow {
 
   static void cursor_callback(GLFWwindow *glfw_window, F64 xpos, F64 ypos) {
     AppWindow *window = static_cast<AppWindow *>(glfwGetWindowUserPointer(glfw_window));
-    window->mouse.current_pos = {.x = xpos, .y = ypos};
+    window->mouse.current_pos = {.x = static_cast<F32>(xpos), .y = static_cast<F32>(ypos)};
   }
 
 

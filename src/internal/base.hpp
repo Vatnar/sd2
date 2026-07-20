@@ -1,6 +1,7 @@
 #pragma once
 #include <cstdint>
 
+
 using S8 = std::int8_t;
 using S16 = std::int16_t;
 using S32 = std::int32_t;
@@ -171,23 +172,6 @@ constexpr bool any(T val) {
 
 #define MemoryCopy(dst, src, size) __builtin_memmove((dst), (src), (size))
 
-
-//~ String8
-struct String8 {
-  U8 *str;
-  U64 size;
-};
-
-internal String8 str8(U8 *str, U64 size) {
-  String8 result{str, size};
-  return result;
-}
-
-#define str8_lit(S) str8((U8 *)(S), sizeof(S) - 1)
-
-inline std::string to_std_string(String8 s) {
-  return {reinterpret_cast<char const *>(s.str), s.size};
-}
 
 //~ Ringbuffer
 // overwrites on full

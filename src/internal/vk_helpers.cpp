@@ -991,3 +991,62 @@ internal void vk_destroy_texture(vk::Device device, VKTextureImage *tex) {
   device.destroyImageView(tex->image_view);
   device.destroyImage(tex->image);
 }
+
+internal VKBuiltShaderStages build_shader_stages(Arena *arena,
+                                                 vk::Device vk_device,
+                                                 DynArray<VKShaderStageDesc> *shader_stage_descriptions) {
+  VKBuiltShaderStages out{};
+  out.stages = DynArray<vk::PipelineShaderStageCreateInfo>::with_capacity(arena, shader_stage_descriptions->size);
+  // will create some extra, but its fine. this object is freed after pipeline creation anyways
+  out.modules = DynArray<VKLoadedShaderModule>::with_capacity(arena, shader_stage_descriptions->size);
+
+  // compile modules
+  for (U64 i = 0; i < shader_stage_descriptions->size; i++) {
+    String8 file_name = (*shader_stage_descriptions)[i].file_name;
+    bool already_compiled = false;
+    for (U64 j = 0; j < out.modules.size; j++) {
+      if (out.modules[j].file_name == file_name) {
+        already_compiled = true;
+        break;
+      }
+    }
+    if (already_compiled)
+      continue;
+
+    auto *dst = &out.modules[out.modules.size++];
+    dst->file_name = file_name;
+
+    Temp scratch = scratch_begin(&arena, 1);
+    String8 shader_code = read_file(scratch.arena, file_name);
+    ASSERT(shader_code.size % 4 == 0);
+    //TODO:  read file that returns * to U32* mem, size multiple 4, and read as bin
+    vk::ShaderModuleCreateInfo module_info{.codeSize = shader_code.size * sizeof(U8),
+                                           .pCode = reinterpret_cast<U32 *>(shader_code.str)};
+    dst->module = vk_abort_if_error(vk_device.createShaderModule(module_info));
+    scratch.end();
+  }
+
+  for (U64 i = 0; i < shader_stage_descriptions->size; i++) {
+    VKShaderStageDesc stage = (*shader_stage_descriptions)[i];
+    auto *dst = &out.stages[out.stages.size++];
+
+    dst->stage = (*shader_stage_descriptions)[i].stage;
+    dst->sType = vk::StructureType::ePipelineShaderStageCreateInfo;
+    dst->pName = stage.entrypoint_name.to_c_str(arena);
+
+    bool found_module = false;
+    vk::ShaderModule *shader_module{};
+    for (U64 j = 0; j < out.modules.size; j++) {
+      if ((*shader_stage_descriptions)[i].file_name == out.modules[j].file_name) {
+        found_module = true;
+        shader_module = &out.modules[j].module;
+        break;
+      }
+    }
+    if (!found_module) {
+      ASSERT(!"Didnt find shader module");
+    }
+    dst->module = *shader_module;
+  }
+  return out;
+};

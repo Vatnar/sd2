@@ -1,3 +1,5 @@
+#include <thread>
+#include <fstream>
 #include "../sd2_inc.hpp"
 
 void glfw_error_callback(int ec, char const *desc) {
@@ -23,6 +25,87 @@ internal AppWindow glfw_init_window(AppParams *app_params) {
   glfwSetWindowRefreshCallback(glfw_window, AppWindow::dispatch_refresh);
   glfwSetCharCallback(glfw_window, AppWindow::dispatch_char);
   return res;
+}
+
+String8 read_file(Arena *arena, String8 filename) {
+  std::string string_filename = to_std_string(filename);
+  std::ifstream file(string_filename, std::ios::ate | std::ios::binary);
+  if (!file.is_open()) {
+    printf("Failed to open file");
+    return {};
+  }
+
+  std::streampos const BUFFER_SIZE = file.tellg();
+  U8 *buffer = arena->push_array<U8>(file.tellg());
+  file.seekg(0, std::ios::beg);
+  file.read(reinterpret_cast<char *>(buffer), BUFFER_SIZE);
+  file.close();
+  return str8(buffer, BUFFER_SIZE);
+}
+
+void write_file(String8 filename, void *mem, U64 offset, U64 length) {
+  if (filename.str == nullptr || filename.size == 0) {
+    ASSERT(!"Invalid name");
+  }
+
+  if (mem == nullptr && length != 0) {
+    ASSERT(!"Nulll memory with non zero length");
+  }
+
+  std::ofstream file(
+      reinterpret_cast<char const *>(filename.str),
+      std::ios::binary | std::ios::out | std::ios::trunc
+      );
+
+  if (!file.is_open()) {
+    ASSERT(!"Failed to open file");
+  }
+
+  char const *bytes = static_cast<char const *>(mem) + offset;
+  file.write(bytes, static_cast<std::streamsize>(length));
+
+  if (!file.good()) {
+    ASSERT(!"Failed to write file");
+  }
+}
+
+void FrameClock::wait_for_target() {
+  do {
+    clock_gettime(CLOCK_MONOTONIC, &frame_end);
+    F64 remaining = target_ms - diff_ms(frame_start, frame_end);
+    if (remaining > 0.3) {
+      std::this_thread::sleep_for(std::chrono::duration<F64, std::milli>(remaining - 0.2));
+    }
+  } while (diff_ms(frame_start, frame_end) < target_ms);
+  write_report();
+}
+
+void FrameClock::write_report() {
+  F32 new_target = static_cast<F32>(target_ms);
+  F32 new_total = static_cast<F32>(total_ms());
+  F32 new_wait = static_cast<F32>(wait_ms());
+  F32 new_work = static_cast<F32>(work_ms());
+  F32 new_fps = static_cast<F32>(1000.0f / total_ms());
+  F32 new_tfps = static_cast<F32>(1000.0f / target_ms);
+
+  report.target_ms = new_target;
+  report.target_fps = new_tfps;
+  report.alpha = alpha;
+
+  static bool first_report = true;
+  if (first_report) {
+    report.total_ms = new_total;
+    report.wait_ms = new_wait;
+    report.work_ms = new_work;
+    report.fps = new_fps;
+    first_report = false;
+    return;
+  }
+  // Blend the history with the new data scaled by recency
+  report.total_ms = ema_update(report.total_ms, new_total, alpha);
+  report.wait_ms = ema_update(report.wait_ms, new_wait, alpha);
+  report.work_ms = ema_update(report.work_ms, new_work, alpha);
+  report.fps = ema_update(report.fps, new_fps, alpha);
 }
 
 internal U32 glfw_get_required_extensions(char const **out_extensions, U32 max_extensions) {
@@ -80,10 +163,49 @@ internal void handle_mouse_input(Mouse *mouse) {
   mouse->current_scroll = {.x = 0.0, .y = 0.0};
 }
 
-internal std::tuple<DynArray<Vertex>, DynArray<U32>> load_obj(Arena *arena, const char *obj_path) {
-  DynArray<Vertex> vertices{};
+void Camera::transform(Vec3<F32> rotation, Vec3<F32> translation) {
+  // TODO: z translate
+  yaw -= glm::radians(rotation.x);
+  pitch -= glm::radians(rotation.y);
+  pitch = clamp(-glm::pi<F32>() / 2.0f + 0.05f, pitch, glm::pi<F32>() / 2.0f - 0.05f);
+
+  glm::vec3 front{};
+  front.x = glm::cos(yaw) * glm::cos(pitch);
+  front.y = glm::sin(yaw) * glm::cos(pitch);
+  front.z = glm::sin(pitch);
+  camera_front = glm::normalize(front);
+
+  camera_pos += camera_front * translation.x;
+  camera_pos += right() * translation.y;
+  camera_pos += up() * translation.z;
+}
+
+glm::vec3 Camera::right() const {
+  return glm::normalize(glm::cross(camera_front, world_up()));
+}
+
+glm::vec3 Camera::up() const {
+  return glm::normalize(glm::cross(right(), camera_front));
+}
+
+glm::mat4 Camera::view() const {
+  return glm::lookAt(camera_pos, camera_pos + camera_front, world_up());
+}
+
+Camera Camera::from_pos(glm::vec3 pos) {
+  Camera res{};
+  res.camera_pos = pos;
+  res.camera_front = glm::normalize(glm::vec3(0.0f) - pos);
+  res.pitch = glm::asin(res.camera_front.z);
+  res.yaw = glm::atan(res.camera_front.y, res.camera_front.x);
+
+  return res;
+}
+
+internal std::tuple<DynArray<TextureVertex>, DynArray<U32>> load_obj(Arena *arena, const char *obj_path) {
+  DynArray<TextureVertex> vertices{};
   DynArray<U32> indices{};
-  std::vector<Vertex> temp_verts{};
+  std::vector<TextureVertex> temp_verts{};
   std::vector<U32> temp_indices{};
   tinyobj::attrib_t attrib;
   std::vector<tinyobj::shape_t> shapes;
@@ -92,10 +214,10 @@ internal std::tuple<DynArray<Vertex>, DynArray<U32>> load_obj(Arena *arena, cons
   if (!tinyobj::LoadObj(&attrib, &shapes, &materials, &err, obj_path)) {
     TRAP();
   }
-  std::unordered_map<Vertex, U32> unique_vertices{};
+  std::unordered_map<TextureVertex, U32> unique_vertices{};
   for (auto const &shape : shapes) {
     for (auto const &index : shape.mesh.indices) {
-      Vertex vertex{
+      TextureVertex vertex{
           .pos = {attrib.vertices[3 * index.vertex_index + 0],
                   attrib.vertices[3 * index.vertex_index + 1],
                   attrib.vertices[3 * index.vertex_index + 2]},
@@ -123,4 +245,8 @@ internal std::tuple<DynArray<Vertex>, DynArray<U32>> load_obj(Arena *arena, cons
     indices.data[i] = temp_indices[i];
   }
   return {vertices, indices};
+}
+
+constexpr glm::vec3 Camera::world_up() {
+  return {0.0f, 0.0f, 1.0f};
 }

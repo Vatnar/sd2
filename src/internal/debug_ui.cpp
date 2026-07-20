@@ -115,28 +115,53 @@ internal void debug_ui_palette_render(PaletteState *state) {
   ImGui::End();
 }
 
+struct DebugUIState {
+  bool debug_show_ui = true;
+  bool debug_show_timings = true;
+  bool debug_show_last_command = false;
+  bool debug_show_cursor_info = false;
+  bool debug_show_scroll_info = false;
+  bool debug_show_camera_info = false;
+};
+
+static DebugUIState g_ui{};
+internal void load_debug_ui_state() {
+  Temp scratch = scratch_begin(0, 0);
+  String8 content = read_file(scratch.arena, str8_lit("debug_ui_state"));
+  if (content.size == sizeof(DebugUIState))
+    MemoryCopy(&g_ui, content.str, sizeof(DebugUIState));
+  scratch.end();
+}
+
+internal void save_debug_ui_state() {
+  write_file(str8_lit("debug_ui_state"), &g_ui, 0, sizeof(g_ui));
+}
+
 internal void debug_ui_debug_ui(TimeReport *report) {
-  local_persist bool debug_show_ui = true;
-  local_persist bool debug_show_timings = true;
-  local_persist bool debug_show_last_command = false;
-  local_persist bool debug_show_cursor_info = false;
+  // TODO: save the state of these cross runs
+
 
   [[unlikely]] if (!g_dbg_ctx.debug_show_window)
-    g_dbg_ctx.debug_show_window = &debug_show_ui;
-  [[unlikely]] if (!g_dbg_ctx.debug_show_last_command)
-    g_dbg_ctx.debug_show_last_command = &debug_show_last_command;
-  [[unlikely]] if (!g_dbg_ctx.debug_show_cursor_info)
-    g_dbg_ctx.debug_show_cursor_info = &debug_show_cursor_info;
+    g_dbg_ctx.debug_show_window = &g_ui.debug_show_ui;
   [[unlikely]] if (!g_dbg_ctx.debug_show_timings)
-    g_dbg_ctx.debug_show_timings = &debug_show_timings;
+    g_dbg_ctx.debug_show_timings = &g_ui.debug_show_timings;
+  [[unlikely]] if (!g_dbg_ctx.debug_show_last_command)
+    g_dbg_ctx.debug_show_last_command = &g_ui.debug_show_last_command;
 
+  [[unlikely]] if (!g_dbg_ctx.debug_show_cursor_info)
+    g_dbg_ctx.debug_show_cursor_info = &g_ui.debug_show_cursor_info;
+
+  [[unlikely]] if (!g_dbg_ctx.debug_show_scroll_info)
+    g_dbg_ctx.debug_show_scroll_info = &g_ui.debug_show_scroll_info;
+  [[unlikely]] if (!g_dbg_ctx.debug_show_camera_info)
+    g_dbg_ctx.debug_show_camera_info = &g_ui.debug_show_camera_info;
   //~ Debug UI
-  if (debug_show_ui) {
+  if (g_ui.debug_show_ui) {
     if (ImGui::Begin("debug",
                      nullptr,
                      ImGuiWindowFlags_NoResize | ImGuiWindowFlags_NoTitleBar |
                      ImGuiWindowFlags_AlwaysAutoResize)) {
-      if (debug_show_timings) {
+      if (g_ui.debug_show_timings) {
         if (*g_dbg_ctx.paused) {
           ImGui::TextColored({0.0f, 0.2f, 0.2f, 1.0f}, "Paused");
         }
@@ -177,15 +202,28 @@ internal void debug_ui_debug_ui(TimeReport *report) {
           ImGui::EndTable();
         }
       }
-      if (debug_show_last_command) {
+      if (g_ui.debug_show_last_command && g_dbg_ctx.last_command) {
         ImGui::SeparatorText("Last command:");
         ImGui::Text("%s", g_dbg_ctx.last_command);
       }
-      if (debug_show_cursor_info) {
+      if (g_ui.debug_show_cursor_info && g_dbg_ctx.window) {
         ImGui::SeparatorText("Cursor");
         Mouse *mouse = &g_dbg_ctx.window->mouse;
-        ImGui::Text("Current pos: { %f, %f }", mouse->current_pos.x, mouse->current_pos.y);
-        ImGui::Text("Delta pos: { %f, %f }", mouse->delta_pos.x, mouse->delta_pos.y);
+        ImGui::Text("Current : { %.0f, %.0f }", mouse->current_pos.x, mouse->current_pos.y);
+        ImGui::Text("Delta   : { %.0f, %.0f }", mouse->delta_pos.x, mouse->delta_pos.y);
+      }
+      if (g_ui.debug_show_scroll_info && g_dbg_ctx.window) {
+        ImGui::SeparatorText("Scroll");
+        Mouse *mouse = &g_dbg_ctx.window->mouse;
+        ImGui::Text("Delta  : { %.0f, %.0f }", mouse->delta_scroll.x, mouse->delta_scroll.y);
+      }
+
+      if (g_ui.debug_show_camera_info && g_dbg_ctx.camera) {
+        ImGui::SeparatorText("Camera");
+        imgui_draw_glm_vec32f("pos  ", g_dbg_ctx.camera->camera_pos);
+        imgui_draw_glm_vec32f("front", g_dbg_ctx.camera->camera_front);
+        imgui_draw_glm_vec32f("right", g_dbg_ctx.camera->right());
+        imgui_draw_glm_vec32f("up   ", g_dbg_ctx.camera->up());
       }
     }
     ImGui::End();

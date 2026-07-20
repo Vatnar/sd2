@@ -256,3 +256,23 @@ vk_load_texture(vk::PhysicalDevice vk_phys_dev,
                 vk::CommandPool vk_command_pool,
                 vk::Queue graphics_queue,
                 char const *texture_path);
+
+struct VKShaderStageDesc {
+  vk::ShaderStageFlagBits stage{};
+  String8 entrypoint_name{};
+  String8 file_name{};
+};
+
+struct VKLoadedShaderModule {
+  String8 file_name;
+  vk::ShaderModule module;
+};
+
+struct VKBuiltShaderStages {
+  DynArray<vk::PipelineShaderStageCreateInfo> stages;
+  DynArray<VKLoadedShaderModule> modules;
+};
+
+internal VKBuiltShaderStages build_shader_stages(Arena *arena,
+                                                 vk::Device vk_device,
+                                                 DynArray<VKShaderStageDesc> *shader_stage_descriptions);

@@ -58,8 +58,10 @@ struct TextureVertex {
   glm::vec3 color;
   glm::vec2 tex_coord;
 
-  static constexpr vk::VertexInputBindingDescription get_binding_description() {
-    return {.binding = 0, .stride = sizeof(TextureVertex), .inputRate = vk::VertexInputRate::eVertex};
+  static constexpr Array<vk::VertexInputBindingDescription, 1> get_binding_descriptions() {
+    return {
+        vk::VertexInputBindingDescription{.binding = 0, .stride = sizeof(TextureVertex),
+                                          .inputRate = vk::VertexInputRate::eVertex}};
   }
 
   static constexpr Array<vk::VertexInputAttributeDescription, 3> get_attribute_descriptions() {
@@ -340,88 +342,58 @@ int main() {
                         pa
       );
 
-  // TODO: extract to create_pipeline(device, format, render_format, extent, arena) -> {pipeline, layout, module,
-  // ds_layout}
-  //~ Shader + Pipeline + Descriptor Set Layout
-
+  //~ Graphics Pipeline Libraries (GPL)
   vk::PipelineLayout vk_pipeline_layout{};
-  vk::Pipeline vk_graphics_pipeline{};
   vk::DescriptorSetLayout vk_descriptor_set_layout{};
   vk::Image vk_depth_image{};
-
   vk::ImageView vk_depth_image_view{};
+  vk::Pipeline vk_output_lib{};
+  vk::Pipeline vk_model_a{}, vk_model_b{}, vk_model_c{};
+  vk::Pipeline vk_line_a{}, vk_line_b{}, vk_line_c{};
+  vk::Pipeline vk_graphics_pipeline{};
+  vk::Pipeline vk_line_pipeline{};
+  vk::Buffer vk_line_vertex_buffer{};
+
   {
-    Temp scratch = scratch_begin(0, 0);
-    auto shader_stage_descriptions = DynArray<VKShaderStageDesc>::from_init(scratch.arena,
-                                                                            {
-                                                                                VKShaderStageDesc{
-                                                                                    .stage =
-                                                                                    vk::ShaderStageFlagBits::eVertex,
-                                                                                    .entrypoint_name = str8_lit(
-                                                                                        "vert_main"),
-                                                                                    .file_name = str8_lit(
-                                                                                        "assets/shaders/shader.spv")},
-                                                                                VKShaderStageDesc{
-                                                                                    .stage =
-                                                                                    vk::ShaderStageFlagBits::eFragment,
-                                                                                    .entrypoint_name = str8_lit(
-                                                                                        "frag_main"),
-                                                                                    .file_name = str8_lit(
-                                                                                        "assets/shaders/shader.spv")}
-                                                                            });
-    auto shader_stages = build_shader_stages(scratch.arena,
-                                             vk_device,
-                                             &shader_stage_descriptions);
+    TempScope scratch = scratch_begin_scoped(0, 0);
 
+    //--- Shared: shader stages (compiled once, sliced for B and C) ---
+    VKShaderStageDesc vert_desc{
+        .stage = vk::ShaderStageFlagBits::eVertex,
+        .entrypoint_name = str8_lit("vert_main"),
+        .file_name = str8_lit("assets/shaders/shader.spv"),
+    };
+    VKShaderStageDesc frag_desc{
+        .stage = vk::ShaderStageFlagBits::eFragment,
+        .entrypoint_name = str8_lit("frag_main"),
+        .file_name = str8_lit("assets/shaders/shader.spv"),
+    };
+    VKShaderStageDesc line_vert_desc{
+        .stage = vk::ShaderStageFlagBits::eVertex,
+        .entrypoint_name = str8_lit("vert_main"),
+        .file_name = str8_lit("assets/shaders/line.spv"),
+    };
+    VKShaderStageDesc line_frag_desc{
+        .stage = vk::ShaderStageFlagBits::eFragment,
+        .entrypoint_name = str8_lit("frag_main"),
+        .file_name = str8_lit("assets/shaders/line.spv"),
+    };
+    DynArray<VKShaderStageDesc> shader_descs =
+        DynArray<VKShaderStageDesc>::from_init(scratch, {vert_desc, frag_desc, line_vert_desc, line_frag_desc});
+    auto shader_stages = build_shader_stages(scratch, vk_device, &shader_descs);
 
-    auto binding_descriptions = TextureVertex::get_binding_description();
-    auto attribute_descriptions = TextureVertex::get_attribute_descriptions();
-
-    vk::PipelineVertexInputStateCreateInfo vertex_input_info{
-        .vertexBindingDescriptionCount = 1,
-        .pVertexBindingDescriptions = &binding_descriptions,
-        .vertexAttributeDescriptionCount = attribute_descriptions.size(),
-        .pVertexAttributeDescriptions = attribute_descriptions};
-    vk::PipelineInputAssemblyStateCreateInfo input_assembly{.topology = vk::PrimitiveTopology::eTriangleList};
-    vk::PipelineViewportStateCreateInfo viewport_state{.viewportCount = 1, .scissorCount = 1};
-
-    vk::PipelineRasterizationStateCreateInfo rasterizer{.depthClampEnable = vk::False,
-                                                        .rasterizerDiscardEnable = vk::False,
-                                                        .polygonMode = vk::PolygonMode::eFill,
-                                                        .cullMode = vk::CullModeFlagBits::eBack,
-                                                        .frontFace = vk::FrontFace::eCounterClockwise,
-                                                        .depthBiasEnable = vk::False,
-                                                        .lineWidth = 1.0f};
-    vk::PipelineColorBlendAttachmentState color_blend_attachment{
-        .blendEnable = vk::False,
-        .colorWriteMask = vk::ColorComponentFlagBits::eR | vk::ColorComponentFlagBits::eG |
-                          vk::ColorComponentFlagBits::eB | vk::ColorComponentFlagBits::eA};
-    vk::PipelineColorBlendStateCreateInfo color_blending{.logicOpEnable = vk::False,
-                                                         .logicOp = vk::LogicOp::eCopy,
-                                                         .attachmentCount = 1,
-                                                         .pAttachments = &color_blend_attachment};
-
-    vk::PipelineMultisampleStateCreateInfo multisampling{.rasterizationSamples = vk_msaa_samples,
-                                                         .sampleShadingEnable = vk::True,
-                                                         .minSampleShading = 0.2f};
-    //~ Depth Resources
-    VKDepthResources depth = vk_create_depth_resources(vk_phys_dev,
-                                                       vk_device,
-                                                       &vk_device_arena,
-                                                       vk_swapchain_extent,
-                                                       vk_msaa_samples);
+    //--- Shared: depth resources (swapchain lifetime, not pipeline lifetime) ---
+    VKDepthResources depth = vk_create_depth_resources(
+        vk_phys_dev,
+        vk_device,
+        &vk_device_arena,
+        vk_swapchain_extent,
+        vk_msaa_samples);
     vk_depth_image = depth.tex.image;
     vk_depth_image_view = depth.tex.image_view;
     vk::Format depth_format = depth.format;
-    vk::PipelineDepthStencilStateCreateInfo depth_stencil{
-        .depthTestEnable = vk::True,
-        .depthWriteEnable = vk::True,
-        .depthCompareOp = vk::CompareOp::eLess,
-        .depthBoundsTestEnable = vk::False,
-        .stencilTestEnable = vk::False,
-    };
-    // TODO: extract to create_descriptor_set_layout(device, bindings) -> DescriptorSetLayout
-    //~ Descriptor set bindings
+
+    //--- Shared: descriptor set layout + pipeline layout ---
     Array bindings{
         vk::DescriptorSetLayoutBinding{.binding = 0,
                                        .descriptorType = vk::DescriptorType::eUniformBuffer,
@@ -432,46 +404,102 @@ int main() {
                                        .descriptorCount = 1,
                                        .stageFlags = vk::ShaderStageFlagBits::eFragment}
     };
+    vk_descriptor_set_layout = create_descriptor_set_layout(vk_device, bindings.size(), bindings);
+    vk_pipeline_layout = create_pipeline_layout(vk_device, vk_descriptor_set_layout);
 
-    vk::DescriptorSetLayoutCreateInfo dslci{.bindingCount = bindings.size(), .pBindings = bindings};
-    vk_descriptor_set_layout = vk_abort_if_error(vk_device.createDescriptorSetLayout(dslci));
+    //--- Shared D: Fragment Output Interface ---
+    FragmentOutputLibDesc desc_d{
+        .msaa_samples = vk_msaa_samples,
+        .color_format = vk_chosen_format,
+        .depth_format = depth_format,
+    };
+    vk_output_lib = create_fragment_output_library(vk_device, desc_d);
 
-    // TODO: extract to create_graphics_pipeline(...) -> {Pipeline, PipelineLayout}
-    //~ Pipeline Creation
+    //--- Model pipeline: A (Vertex Input Interface) ---
+    VertexInputLibDesc desc_a{
+        .bindings = TextureVertex::get_binding_descriptions().to_dyn(scratch),
+        .attributes = TextureVertex::get_attribute_descriptions().to_dyn(scratch),
+        .topology = vk::PrimitiveTopology::eTriangleList,
+    };
+    vk_model_a = create_vertex_input_library(vk_device, desc_a);
+
+    //--- Model pipeline: B (Pre-Rasterization Shaders) ---
+    PreRasterLibDesc desc_b{};
+    vk_model_b = create_pre_raster_library(
+        vk_device,
+        vk_pipeline_layout,
+        desc_b,
+        shader_stages.stages,
+        1);
+
+    //--- Model pipeline: C (Fragment Shader) ---
+    FragmentLibDesc desc_c{
+        .msaa_samples = vk_msaa_samples,
+        .sample_shading_enable = vk::True,
+        .min_sample_shading = 0.2f,
+    };
+    vk_model_c = create_fragment_library(
+        vk_device,
+        vk_pipeline_layout,
+        desc_c,
+        &shader_stages.stages[1],
+        1);
+
+    //--- Model pipeline: Link ---
     PROFILE_START("pipeline_creation");
-    vk::PipelineLayoutCreateInfo pipeline_layout_info{.setLayoutCount = 1,
-                                                      .pSetLayouts = &vk_descriptor_set_layout,
-                                                      .pushConstantRangeCount = 0};
-    vk_pipeline_layout = vk_abort_if_error(vk_device.createPipelineLayout(pipeline_layout_info));
-
-    Array dynamic_states = {vk::DynamicState::eViewport, vk::DynamicState::eScissor};
-    vk::PipelineDynamicStateCreateInfo dynamic_state{.dynamicStateCount = 2, .pDynamicStates = dynamic_states};
-
-    vk::GraphicsPipelineCreateInfo gpci{
-        .stageCount = static_cast<U32>(shader_stages.stages.size),
-        .pStages = shader_stages.stages,
-        .pVertexInputState = &vertex_input_info,
-        .pInputAssemblyState = &input_assembly,
-        .pViewportState = &viewport_state,
-        .pRasterizationState = &rasterizer,
-        .pMultisampleState = &multisampling,
-        .pDepthStencilState = &depth_stencil,
-        .pColorBlendState = &color_blending,
-        .pDynamicState = &dynamic_state,
-        .layout = vk_pipeline_layout,
-        .renderPass = nullptr,
-    };
-    vk::PipelineRenderingCreateInfo prci{
-        .colorAttachmentCount = 1,
-        .pColorAttachmentFormats = &vk_chosen_format,
-        .depthAttachmentFormat = depth_format,
-    };
-    vk::StructureChain pipeline_create_info_chain{gpci, prci};
-
-    vk_graphics_pipeline = vk_abort_if_error(
-        vk_device.createGraphicsPipeline(nullptr, pipeline_create_info_chain.get<vk::GraphicsPipelineCreateInfo>()));
+    vk::Pipeline model_libs[] = {vk_model_a, vk_model_b, vk_model_c, vk_output_lib};
+    vk_graphics_pipeline = create_linked_pipeline(
+        vk_device,
+        vk_pipeline_layout,
+        4,
+        model_libs,
+        vk_chosen_format,
+        depth_format);
     U64 pipe_cycles = PROFILE_END();
-    printf("Pipeline creation: %lu cycles\n", pipe_cycles);
+    printf("Model pipeline creation: %lu cycles\n", pipe_cycles);
+
+    //--- Line pipeline: A (LineVertex, line list) ---
+    VertexInputLibDesc line_desc_a{
+        .bindings = DynArray<vk::VertexInputBindingDescription>::from_init(scratch,
+                                                                           {LineVertex::get_binding_description()}),
+        .attributes = LineVertex::get_attribute_descriptions().to_dyn(scratch),
+        .topology = vk::PrimitiveTopology::eLineList,
+    };
+    vk_line_a = create_vertex_input_library(vk_device, line_desc_a);
+
+    //--- Line pipeline: B (same raster defaults, dynamic line width) ---
+    vk::DynamicState line_states[] = {vk::DynamicState::eViewport, vk::DynamicState::eScissor, vk::DynamicState::eLineWidth};
+    vk_line_b = create_pre_raster_library(
+        vk_device,
+        vk_pipeline_layout,
+        PreRasterLibDesc{.line_width = 5.0f, .dynamic_states = line_states, .dynamic_state_count = 3},
+        &shader_stages.stages[2],
+        1);
+
+    //--- Line pipeline: C (matching msaa for GPL compatibility) ---
+    FragmentLibDesc line_desc_c{
+        .msaa_samples = vk_msaa_samples,
+        .sample_shading_enable = vk::True,
+        .min_sample_shading = 0.2f,
+    };
+    vk_line_c = create_fragment_library(
+        vk_device,
+        vk_pipeline_layout,
+        line_desc_c,
+        &shader_stages.stages[3],
+        1);
+
+    //--- Line pipeline: Link ---
+    vk::Pipeline line_libs[] = {vk_line_a, vk_line_b, vk_line_c, vk_output_lib};
+    vk_line_pipeline = create_linked_pipeline(
+        vk_device,
+        vk_pipeline_layout,
+        4,
+        line_libs,
+        vk_chosen_format,
+        depth_format);
+
+    //--- Cleanup (shader modules only; library pipelines persist for linked pipeline) ---
     for (U64 i = 0; i < shader_stages.modules.size; i++) {
       vk_device.destroyShaderModule(shader_stages.modules[i].module);
     }
@@ -548,6 +576,33 @@ int main() {
                                                                         vertices,
                                                                         indices);
   vk::DeviceSize vk_swapchain_arena_checkpoint = vk_device_arena.offset;
+  {
+    LineVertex line_vertices[] = {
+        {{0.0f, 0.0f, 0.0f}, {1.0f, 0.0f, 0.0f, 1.0f}},
+        {{1.0f, 0.0f, 0.0f}, {1.0f, 0.0f, 0.0f, 1.0f}},
+        {{0.0f, 0.0f, 0.0f}, {0.0f, 1.0f, 0.0f, 1.0f}},
+        {{0.0f, 1.0f, 0.0f}, {0.0f, 1.0f, 0.0f, 1.0f}},
+        {{0.0f, 0.0f, 0.0f}, {0.0f, 0.0f, 1.0f, 1.0f}},
+        {{0.0f, 0.0f, 1.0f}, {0.0f, 0.0f, 1.0f, 1.0f}},
+    };
+    vk::DeviceSize buffer_size = sizeof(line_vertices);
+    auto [staging, staging_alloc] = vk_create_buffer(vk_phys_dev,
+                                                     vk_device,
+                                                     buffer_size,
+                                                     vk::BufferUsageFlagBits::eTransferSrc,
+                                                     &vk_host_arena);
+    MemoryCopy(staging_alloc.mapped, line_vertices, buffer_size);
+    auto [vb, vb_alloc] = vk_create_buffer(vk_phys_dev,
+                                           vk_device,
+                                           buffer_size,
+                                           vk::BufferUsageFlagBits::eVertexBuffer |
+                                           vk::BufferUsageFlagBits::eTransferDst,
+                                           &vk_device_arena);
+    vk_line_vertex_buffer = vb;
+    (void)vb_alloc;
+    vk_copy_buffer(vk_device, vk_command_pool, vk_graphics_queue, staging, vk_line_vertex_buffer, buffer_size);
+    vk_device.destroyBuffer(staging);
+  }
   // TODO: extract to create_uniform_descriptors(device, phys_dev, host_arena, tex_sampler, tex_image, ...) ->
   // {uniform_buffers, descriptor_pool, descriptor_sets, uniform_buffers_mapped}
   //~ Uniform Buffers + Descriptors
@@ -813,6 +868,15 @@ int main() {
                                 vk_descriptor_sets[current_frame],
                                 nullptr);
       vk_cmd.drawIndexed(indices.size, 1, 0, 0, 0);
+      vk_cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, vk_line_pipeline);
+      vk_cmd.setLineWidth(5.0f);
+      vk_cmd.bindVertexBuffers(0, vk_line_vertex_buffer, {0});
+      vk_cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics,
+                                vk_pipeline_layout,
+                                0,
+                                vk_descriptor_sets[current_frame],
+                                nullptr);
+      vk_cmd.draw(6, 1, 0, 0);
       vk_cmd.endRendering();
 
       imgui_render(vk_cmd, vk_sc->image_views[vk_image_index], vk_swapchain_extent);
@@ -962,7 +1026,16 @@ int main() {
       vk_device.destroyBuffer(vk_uniform_buffers[i]);
     vk_device.destroyBuffer(vk_index_buffer);
     vk_device.destroyBuffer(vk_vertex_buffer);
+    vk_device.destroyBuffer(vk_line_vertex_buffer);
     vk_device.destroyPipeline(vk_graphics_pipeline);
+    vk_device.destroyPipeline(vk_line_pipeline);
+    vk_device.destroyPipeline(vk_output_lib);
+    vk_device.destroyPipeline(vk_line_c);
+    vk_device.destroyPipeline(vk_line_b);
+    vk_device.destroyPipeline(vk_line_a);
+    vk_device.destroyPipeline(vk_model_c);
+    vk_device.destroyPipeline(vk_model_b);
+    vk_device.destroyPipeline(vk_model_a);
     vk_device.destroyPipelineLayout(vk_pipeline_layout);
     vk_device.destroyDescriptorSetLayout(vk_descriptor_set_layout);
     vk_device.destroyImageView(vk_depth_image_view);

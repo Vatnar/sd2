@@ -11,7 +11,7 @@ TARGET := $(BUILD_DIR)/sd2
 DEPS := $(BUILD_DIR)/main.d
 
 SLANGC ?= slangc
-SLANG_SOURCES := assets/shaders/shader.slang
+SLANG_SOURCES := assets/shaders/shader.slang assets/shaders/line.slang
 SLANG_OUTPUTS := $(patsubst assets/shaders/%.slang,$(SHADER_DIR)/%.spv,$(SLANG_SOURCES))
 SLANG_FLAGS := -target spirv -profile spirv_1_4 -emit-spirv-directly \
                -fvk-use-entrypoint-name -entry vert_main -entry frag_main

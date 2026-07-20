@@ -5,9 +5,19 @@
 
 internal AppWindow glfw_init_window(AppParams *app_params);
 
-internal String8 read_file(Arena *arena, String8 filename);
+
+internal String8 read_file_str8(Arena *arena, String8 filename);
+
+struct SPIRVBlob {
+  U32 *words;
+  U64 word_count;
+  U64 byte_count;
+};
+
+internal SPIRVBlob read_spirv_blob(Arena *arena, String8 filename);
 
 internal void write_file(String8 filename, void *mem, U64 offset, U64 length);
+
 FORCE_INLINE internal F64 diff_ms(timespec const &a, timespec const &b) {
   return static_cast<F64>(b.tv_sec - a.tv_sec) * 1000.0 +
          static_cast<F64>(b.tv_nsec - a.tv_nsec) / 1e6;

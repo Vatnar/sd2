@@ -9,7 +9,7 @@ struct String8 {
   U64 size;
   bool operator==(const String8 &other) const;
 
-  const char *to_c_str(Arena *arena) const {
+  const char *c_str(Arena *arena) const {
     char *c_str = arena->push_array<char>(size + 1);
     for (U64 i = 0; i < size; i++) {
       c_str[i] = static_cast<char>(str[i]);

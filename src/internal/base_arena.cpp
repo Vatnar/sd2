@@ -307,11 +307,25 @@ Temp Arena::temp_begin() {
   return temp;
 }
 
-TempScope Arena::temp_scope() {
-  return TempScope{this->temp_begin()};
-}
 
 void Temp::end() {
+  ASSERT_ALWAYS(this->arena != nullptr);
+  ASSERT_ALWAYS(this->pos <= this->arena->pos());
+  this->arena->pop_to(this->pos);
+#if SD2_DEBUG
+  this->arena = nullptr;
+  this->pos = 0;
+#endif
+}
+
+TempScope Temp::scoped() {
+  TempScope scope{};
+  scope.arena = this->arena;
+  scope.pos = this->pos;
+  return scope;
+}
+
+void TempScope::end() {
   ASSERT_ALWAYS(this->arena != nullptr);
   ASSERT_ALWAYS(this->pos <= this->arena->pos());
   this->arena->pop_to(this->pos);

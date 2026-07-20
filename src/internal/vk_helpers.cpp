@@ -207,7 +207,7 @@ internal VKRatedDevice vk_pick_best_physical_device(vk::Instance instance, vk::S
     if (!vk_check_device_extension_support(device, VK_KHR_SWAPCHAIN_EXTENSION_NAME))
       continue;
 
-    VKSwapchainSupport swapchain_support = vk_query_swapchain_support(device, surface, scratch.arena);
+    VKSwapchainSupport swapchain_support = vk_query_swapchain_support(device, surface, scratch);
     if (swapchain_support.format_count == 0 || swapchain_support.mode_count == 0)
       continue;
 
@@ -476,11 +476,6 @@ internal vk::ImageView vk_create_image_view(vk::Device device,
   return vk_abort_if_error(device.createImageView(view_info));
 }
 
-using PhysicalDeviceFeatures = vk::StructureChain<vk::PhysicalDeviceFeatures2,
-                                                  vk::PhysicalDeviceVulkan11Features,
-                                                  vk::PhysicalDeviceVulkan13Features,
-                                                  vk::PhysicalDeviceVulkan14Features,
-                                                  vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT>;
 
 internal PhysicalDeviceFeatures enable_phys_dev_features(vk::PhysicalDevice vk_phys_dev) {
   PhysicalDeviceFeatures s_features{};
@@ -490,6 +485,7 @@ internal PhysicalDeviceFeatures enable_phys_dev_features(vk::PhysicalDevice vk_p
   ASSERT_ALWAYS(s_features.get<vk::PhysicalDeviceVulkan13Features>().dynamicRendering);
   ASSERT_ALWAYS(s_features.get<vk::PhysicalDeviceVulkan11Features>().shaderDrawParameters);
   ASSERT_ALWAYS(s_features.get<vk::PhysicalDeviceFeatures2>().features.samplerAnisotropy);
+  ASSERT_ALWAYS(s_features.get<vk::PhysicalDeviceFeatures2>().features.wideLines);
   ASSERT_ALWAYS(s_features.get<vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT>().extendedDynamicState);
 
   PhysicalDeviceFeatures e_features{};
@@ -499,6 +495,10 @@ internal PhysicalDeviceFeatures enable_phys_dev_features(vk::PhysicalDevice vk_p
   e_features.get<vk::PhysicalDeviceVulkan11Features>().shaderDrawParameters = vk::True;
   e_features.get<vk::PhysicalDeviceFeatures2>().features.samplerAnisotropy = vk::True;
   e_features.get<vk::PhysicalDeviceFeatures2>().features.sampleRateShading = vk::True;
+  e_features.get<vk::PhysicalDeviceFeatures2>().features.wideLines = vk::True;
+  e_features.get<vk::PhysicalDeviceGraphicsPipelineLibraryFeaturesEXT>().graphicsPipelineLibrary = vk::True;
+  // TODO: figure out how to do fast linking
+
 
   return e_features;
 }
@@ -745,13 +745,13 @@ vk_create_logical_device(vk::PhysicalDevice phys_dev, VKQueueFamilyIndices queue
         .queueFamilyIndex = queue_indices.present_index, .queueCount = 1, .pQueuePriorities = &queue_priority,
     };
   }
-  Array device_extensions = {VK_KHR_SWAPCHAIN_EXTENSION_NAME};
+  Array device_extensions = {VK_KHR_SWAPCHAIN_EXTENSION_NAME, VK_KHR_PIPELINE_LIBRARY_EXTENSION_NAME, VK_EXT_GRAPHICS_PIPELINE_LIBRARY_EXTENSION_NAME};
   PhysicalDeviceFeatures features = enable_phys_dev_features(phys_dev);
   vk::DeviceCreateInfo dev_info{
       .pNext = &features.get<vk::PhysicalDeviceFeatures2>(),
       .queueCreateInfoCount = queue_info_count,
       .pQueueCreateInfos = queue_infos,
-      .enabledExtensionCount = 1,
+      .enabledExtensionCount = device_extensions.size(),
       .ppEnabledExtensionNames = device_extensions,
   };
   vk::Device vk_device = vk_abort_if_error(phys_dev.createDevice(dev_info));
@@ -1016,23 +1016,21 @@ internal VKBuiltShaderStages build_shader_stages(Arena *arena,
     auto *dst = &out.modules[out.modules.size++];
     dst->file_name = file_name;
 
-    Temp scratch = scratch_begin(&arena, 1);
-    String8 shader_code = read_file(scratch.arena, file_name);
-    ASSERT(shader_code.size % 4 == 0);
-    //TODO:  read file that returns * to U32* mem, size multiple 4, and read as bin
-    vk::ShaderModuleCreateInfo module_info{.codeSize = shader_code.size * sizeof(U8),
-                                           .pCode = reinterpret_cast<U32 *>(shader_code.str)};
-    dst->module = vk_abort_if_error(vk_device.createShaderModule(module_info));
-    scratch.end();
+    TempScope scratch = scratch_begin_scoped(&arena, 1);
+
+    SPIRVBlob spirv = read_spirv_blob(scratch, file_name);
+    dst->module = vk_abort_if_error(
+        vk_device.createShaderModule({.codeSize = spirv.byte_count, .pCode = spirv.words}));
   }
 
   for (U64 i = 0; i < shader_stage_descriptions->size; i++) {
     VKShaderStageDesc stage = (*shader_stage_descriptions)[i];
+
     auto *dst = &out.stages[out.stages.size++];
 
     dst->stage = (*shader_stage_descriptions)[i].stage;
     dst->sType = vk::StructureType::ePipelineShaderStageCreateInfo;
-    dst->pName = stage.entrypoint_name.to_c_str(arena);
+    dst->pName = stage.entrypoint_name.c_str(arena);
 
     bool found_module = false;
     vk::ShaderModule *shader_module{};
@@ -1049,4 +1047,188 @@ internal VKBuiltShaderStages build_shader_stages(Arena *arena,
     dst->module = *shader_module;
   }
   return out;
-};
+}
+
+internal vk::Pipeline create_gpl(vk::Device vk_device,
+                                 vk::PipelineCache cache,
+                                 vk::GraphicsPipelineLibraryFlagsEXT subset,
+                                 vk::GraphicsPipelineCreateInfo ci) {
+  vk::GraphicsPipelineLibraryCreateInfoEXT gpl_ci{
+      .flags = subset
+  };
+
+  ci.flags |= vk::PipelineCreateFlagBits::eLibraryKHR;
+  ci.flags |= vk::PipelineCreateFlagBits::eRetainLinkTimeOptimizationInfoEXT;
+  gpl_ci.pNext = ci.pNext;
+  ci.pNext = &gpl_ci;
+
+  vk::Pipeline pipe = vk_abort_if_error(vk_device.createGraphicsPipeline(cache, ci));
+  return pipe;
+}
+
+internal vk::DescriptorSetLayout create_descriptor_set_layout(
+    vk::Device device, U32 binding_count, vk::DescriptorSetLayoutBinding const* bindings)
+{
+  vk::DescriptorSetLayoutCreateInfo ci{.bindingCount = binding_count, .pBindings = bindings};
+  return vk_abort_if_error(device.createDescriptorSetLayout(ci));
+}
+
+internal vk::PipelineLayout create_pipeline_layout(
+    vk::Device device, vk::DescriptorSetLayout set_layout)
+{
+  vk::PipelineLayoutCreateInfo ci{.setLayoutCount = 1, .pSetLayouts = &set_layout};
+  return vk_abort_if_error(device.createPipelineLayout(ci));
+}
+
+internal vk::Pipeline create_vertex_input_library(
+    vk::Device device, VertexInputLibDesc const& desc)
+{
+  vk::PipelineVertexInputStateCreateInfo vertex_input{
+      .vertexBindingDescriptionCount = static_cast<U32>(desc.bindings.size),
+      .pVertexBindingDescriptions = desc.bindings,
+      .vertexAttributeDescriptionCount = static_cast<U32>(desc.attributes.size),
+      .pVertexAttributeDescriptions = desc.attributes,
+  };
+  vk::PipelineInputAssemblyStateCreateInfo input_assembly{
+      .topology = desc.topology,
+      .primitiveRestartEnable = desc.primitive_restart,
+  };
+  vk::GraphicsPipelineCreateInfo ci{
+      .pVertexInputState = &vertex_input,
+      .pInputAssemblyState = &input_assembly,
+  };
+  return create_gpl(device, nullptr,
+      vk::GraphicsPipelineLibraryFlagBitsEXT::eVertexInputInterface, ci);
+}
+
+internal vk::Pipeline create_pre_raster_library(
+    vk::Device device, vk::PipelineLayout layout,
+    PreRasterLibDesc const& desc,
+    vk::PipelineShaderStageCreateInfo const* stages, U32 stage_count)
+{
+  vk::PipelineViewportStateCreateInfo viewport_state{
+      .viewportCount = desc.viewport_count,
+      .scissorCount = desc.scissor_count,
+  };
+  vk::PipelineRasterizationStateCreateInfo rasterizer{
+      .depthClampEnable = desc.depth_clamp,
+      .rasterizerDiscardEnable = desc.rasterizer_discard,
+      .polygonMode = desc.polygon_mode,
+      .cullMode = desc.cull_mode,
+      .frontFace = desc.front_face,
+      .depthBiasEnable = desc.depth_bias,
+      .lineWidth = desc.line_width,
+  };
+  vk::DynamicState default_states[] = {vk::DynamicState::eViewport, vk::DynamicState::eScissor};
+  auto* states = desc.dynamic_states ? desc.dynamic_states : default_states;
+  U32 state_count = desc.dynamic_states ? desc.dynamic_state_count : 2;
+  vk::PipelineDynamicStateCreateInfo dynamic_state{
+      .dynamicStateCount = state_count,
+      .pDynamicStates = states,
+  };
+
+  vk::GraphicsPipelineCreateInfo ci{
+      .stageCount = stage_count,
+      .pStages = stages,
+      .pViewportState = &viewport_state,
+      .pRasterizationState = &rasterizer,
+      .pDynamicState = &dynamic_state,
+      .layout = layout,
+  };
+
+  vk::PipelineTessellationStateCreateInfo tess_state{};
+  if (desc.tessellation) {
+    tess_state.patchControlPoints = desc.tess_patch_control_points;
+    ci.pTessellationState = &tess_state;
+  }
+
+  return create_gpl(device, nullptr,
+      vk::GraphicsPipelineLibraryFlagBitsEXT::ePreRasterizationShaders, ci);
+}
+
+internal vk::Pipeline create_fragment_library(
+    vk::Device device, vk::PipelineLayout layout,
+    FragmentLibDesc const& desc,
+    vk::PipelineShaderStageCreateInfo const* stages, U32 stage_count)
+{
+  vk::PipelineDepthStencilStateCreateInfo depth_stencil{
+      .depthTestEnable = desc.depth_test,
+      .depthWriteEnable = desc.depth_write,
+      .depthCompareOp = desc.depth_compare,
+      .depthBoundsTestEnable = desc.depth_bounds_test,
+      .stencilTestEnable = desc.stencil_test,
+  };
+  vk::PipelineMultisampleStateCreateInfo multisampling{};
+  if (desc.sample_shading_enable) {
+    multisampling = vk::PipelineMultisampleStateCreateInfo{
+        .rasterizationSamples = desc.msaa_samples,
+        .sampleShadingEnable = desc.sample_shading_enable,
+        .minSampleShading = desc.min_sample_shading,
+    };
+  }
+
+  vk::GraphicsPipelineCreateInfo ci{
+      .stageCount = stage_count,
+      .pStages = stages,
+      .pMultisampleState = desc.sample_shading_enable ? &multisampling : nullptr,
+      .pDepthStencilState = &depth_stencil,
+      .layout = layout,
+  };
+  return create_gpl(device, nullptr,
+      vk::GraphicsPipelineLibraryFlagBitsEXT::eFragmentShader, ci);
+}
+
+internal vk::Pipeline create_fragment_output_library(
+    vk::Device device, FragmentOutputLibDesc const& desc)
+{
+  vk::PipelineColorBlendAttachmentState color_blend_attachment{
+      .blendEnable = desc.blend_enable,
+      .colorWriteMask = vk::ColorComponentFlagBits::eR | vk::ColorComponentFlagBits::eG |
+                        vk::ColorComponentFlagBits::eB | vk::ColorComponentFlagBits::eA,
+  };
+  vk::PipelineColorBlendStateCreateInfo color_blending{
+      .logicOpEnable = vk::False,
+      .logicOp = vk::LogicOp::eCopy,
+      .attachmentCount = 1,
+      .pAttachments = &color_blend_attachment,
+  };
+  vk::PipelineMultisampleStateCreateInfo multisampling{
+      .rasterizationSamples = desc.msaa_samples,
+      .sampleShadingEnable = vk::True,
+      .minSampleShading = 0.2f,
+  };
+  vk::PipelineRenderingCreateInfo prci{
+      .colorAttachmentCount = 1,
+      .pColorAttachmentFormats = &desc.color_format,
+      .depthAttachmentFormat = desc.depth_format,
+  };
+  vk::GraphicsPipelineCreateInfo ci{
+      .pNext = &prci,
+      .pMultisampleState = &multisampling,
+      .pColorBlendState = &color_blending,
+  };
+  return create_gpl(device, nullptr,
+      vk::GraphicsPipelineLibraryFlagBitsEXT::eFragmentOutputInterface, ci);
+}
+
+internal vk::Pipeline create_linked_pipeline(
+    vk::Device device, vk::PipelineLayout layout,
+    U32 library_count, vk::Pipeline const* libraries,
+    vk::Format color_format, vk::Format depth_format)
+{
+  vk::PipelineRenderingCreateInfo prci{
+      .colorAttachmentCount = 1,
+      .pColorAttachmentFormats = &color_format,
+      .depthAttachmentFormat = depth_format,
+  };
+  vk::PipelineLibraryCreateInfoKHR link_info{
+      .libraryCount = library_count,
+      .pLibraries = libraries,
+  };
+  prci.pNext = &link_info;
+  vk::GraphicsPipelineCreateInfo ci{
+      .pNext = &prci,
+      .layout = layout,
+  };
+  return vk_abort_if_error(device.createGraphicsPipeline(nullptr, ci));
+}

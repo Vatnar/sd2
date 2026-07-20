@@ -127,7 +127,7 @@ struct DebugUIState {
 static DebugUIState g_ui{};
 internal void load_debug_ui_state() {
   Temp scratch = scratch_begin(0, 0);
-  String8 content = read_file(scratch.arena, str8_lit("debug_ui_state"));
+  String8 content = read_file_str8(scratch, str8_lit("debug_ui_state"));
   if (content.size == sizeof(DebugUIState))
     MemoryCopy(&g_ui, content.str, sizeof(DebugUIState));
   scratch.end();

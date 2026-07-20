@@ -1,11 +1,10 @@
 #pragma once
 
-
 #include "base_arena.hpp"
 
 
 struct ThreadCtx {
-  Arena* scratch_arenas[2];
+  Arena *scratch_arenas[2];
 };
 
 inline thread_local ThreadCtx g_thread_ctx = {};
@@ -23,7 +22,7 @@ inline void thread_ctx_release() {
   }
 }
 
-inline Arena* get_scratch(Arena** conflicts, U64 count) {
+inline Arena *get_scratch(Arena **conflicts, U64 count) {
   if (!g_thread_ctx.scratch_arenas[0]) {
     thread_ctx_init();
   }
@@ -44,5 +43,7 @@ inline Arena* get_scratch(Arena** conflicts, U64 count) {
 
 #define scratch_begin(conflicts, count) \
   get_scratch((conflicts), (count))->temp_begin()
+#define scratch_begin_scoped(conflicts, count) \
+  get_scratch((conflicts), (count))->temp_begin().scoped()
 #define scratch_end(scratch) \
   (scratch).end()

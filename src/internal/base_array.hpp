@@ -85,6 +85,18 @@ struct Array {
     }
     return out;
   }
+
+  DynArray<T> to_dyn(Arena *arena) {
+    DynArray<T> out{};
+    out.data = arena->push_array<T>(size());
+    out.size = size();
+    out.capacity = size();
+
+    for (U64 i = 0; i < size(); i++) {
+      out.data[i] = data[i];
+    }
+    return out;
+  }
 };
 
 template<typename T, typename... U>

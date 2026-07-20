@@ -27,11 +27,12 @@ internal AppWindow glfw_init_window(AppParams *app_params) {
   return res;
 }
 
-String8 read_file(Arena *arena, String8 filename) {
-  std::string string_filename = to_std_string(filename);
-  std::ifstream file(string_filename, std::ios::ate | std::ios::binary);
+String8 read_file_str8(Arena *arena, String8 filename) {
+  TempScope scratch = scratch_begin_scoped(&arena, 1);
+  // TODO: Should this read as binary or not?
+  std::ifstream file(filename.c_str(arena), std::ios::ate | std::ios::binary);
   if (!file.is_open()) {
-    printf("Failed to open file");
+    ASSERT(!"Failed to open file");
     return {};
   }
 
@@ -40,7 +41,29 @@ String8 read_file(Arena *arena, String8 filename) {
   file.seekg(0, std::ios::beg);
   file.read(reinterpret_cast<char *>(buffer), BUFFER_SIZE);
   file.close();
+
   return str8(buffer, BUFFER_SIZE);
+}
+
+SPIRVBlob read_spirv_blob(Arena *arena, String8 filename) {
+  TempScope scratch = scratch_begin_scoped(&arena, 1);
+  SPIRVBlob res{};
+  std::ifstream file(filename.c_str(scratch), std::ios::ate | std::ios::binary);
+  if (!file.is_open()) {
+    ASSERT(!"Failed to open file");
+    return {};
+  }
+
+  std::streampos const BUFFER_SIZE = file.tellg();
+  ASSERT(BUFFER_SIZE % 4 == 0);
+  char *bytes = arena->push_array<char>(file.tellg());
+  file.seekg(0, std::ios::beg);
+  file.read(bytes, BUFFER_SIZE);
+  file.close();
+  res.words = reinterpret_cast<U32 *>(bytes);
+  res.byte_count = BUFFER_SIZE;
+  res.word_count = BUFFER_SIZE / 8;
+  return res;
 }
 
 void write_file(String8 filename, void *mem, U64 offset, U64 length) {

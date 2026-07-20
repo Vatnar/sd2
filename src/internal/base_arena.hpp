@@ -1,7 +1,6 @@
 #pragma once
 #include "base.hpp"
 
-
 enum class ArenaFlags : U64 {
   NONE = 0,
   NO_CHAIN = (1 << 0),
@@ -28,41 +27,32 @@ struct ArenaParams {
 
 struct Arena;
 
+
+struct TempScope {
+  Arena *arena;
+  U64 pos;
+
+  void end();
+
+  ~TempScope() {
+    if (arena)
+      end();
+  }
+
+  operator Arena *() const { // NOLINT(google-explicit-constructor)
+    return arena;
+  }
+};
+
 struct Temp {
   Arena *arena;
   U64 pos;
 
   void end();
-};
+  TempScope scoped();
 
-struct TempScope {
-  Temp t;
-
-  explicit TempScope(Temp temp) : t(temp) {
-  }
-
-  TempScope(TempScope const &) = delete;
-  TempScope &operator=(TempScope const &) = delete;
-
-  TempScope(TempScope &&other) noexcept : t(other.t) {
-    other.t.arena = nullptr;
-    other.t.pos = 0;
-  }
-
-  TempScope &operator=(TempScope &&other) noexcept {
-    if (this != &other) {
-      if (t.arena)
-        t.end();
-      t = other.t;
-      other.t.arena = nullptr;
-      other.t.pos = 0;
-    }
-    return *this;
-  }
-
-  ~TempScope() {
-    if (t.arena)
-      t.end();
+  operator Arena *() const { // NOLINT(google-explicit-constructor)
+    return arena;
   }
 };
 
@@ -87,7 +77,6 @@ struct Arena {
   void pop(U64 amount);
 
   [[nodiscard]] Temp temp_begin();
-  [[nodiscard]] TempScope temp_scope();
 
   //~ helpers
   template<typename T>

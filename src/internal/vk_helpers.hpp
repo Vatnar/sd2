@@ -185,7 +185,8 @@ using PhysicalDeviceFeatures = vk::StructureChain<vk::PhysicalDeviceFeatures2,
                                                   vk::PhysicalDeviceVulkan11Features,
                                                   vk::PhysicalDeviceVulkan13Features,
                                                   vk::PhysicalDeviceVulkan14Features,
-                                                  vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT>;
+                                                  vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT,
+                                                  vk::PhysicalDeviceGraphicsPipelineLibraryFeaturesEXT>;
 internal PhysicalDeviceFeatures enable_phys_dev_features(vk::PhysicalDevice vk_phys_dev);
 
 internal vk::Format find_supported_format(vk::Format *candidates,
@@ -276,3 +277,91 @@ struct VKBuiltShaderStages {
 internal VKBuiltShaderStages build_shader_stages(Arena *arena,
                                                  vk::Device vk_device,
                                                  DynArray<VKShaderStageDesc> *shader_stage_descriptions);
+
+// GPL subset descriptors
+struct VertexInputLibDesc {
+  DynArray<vk::VertexInputBindingDescription> bindings{};
+  DynArray<vk::VertexInputAttributeDescription> attributes{};
+  vk::PrimitiveTopology topology{vk::PrimitiveTopology::eTriangleList};
+  bool primitive_restart{false};
+};
+
+struct PreRasterLibDesc {
+  DynArray<VKShaderStageDesc> shader_stages{};
+  bool tessellation{false};
+  U32 tess_patch_control_points{0};
+  U32 viewport_count{1};
+  U32 scissor_count{1};
+  bool depth_clamp{false};
+  bool rasterizer_discard{false};
+  vk::PolygonMode polygon_mode{vk::PolygonMode::eFill};
+  vk::CullModeFlags cull_mode{vk::CullModeFlagBits::eBack};
+  vk::FrontFace front_face{vk::FrontFace::eCounterClockwise};
+  bool depth_bias{false};
+  F32 line_width{1.0f};
+  vk::DynamicState const* dynamic_states{nullptr};
+  U32 dynamic_state_count{0};
+};
+
+struct FragmentLibDesc {
+  VKShaderStageDesc fragment_shader{};
+  bool depth_test{true};
+  bool depth_write{true};
+  vk::CompareOp depth_compare{vk::CompareOp::eLess};
+  bool depth_bounds_test{false};
+  bool stencil_test{false};
+  vk::SampleCountFlagBits msaa_samples{vk::SampleCountFlagBits::e1};
+  VkBool32 sample_shading_enable{vk::False};
+  float min_sample_shading{1.0f};
+};
+
+struct FragmentOutputLibDesc {
+  vk::SampleCountFlagBits msaa_samples{vk::SampleCountFlagBits::e1};
+  bool blend_enable{false};
+  vk::Format color_format{};
+  vk::Format depth_format{};
+};
+
+internal vk::Pipeline create_gpl(vk::Device vk_device,
+                                 vk::PipelineCache cache,
+                                 vk::GraphicsPipelineLibraryFlagsEXT subset,
+                                 vk::GraphicsPipelineCreateInfo ci);
+
+internal vk::DescriptorSetLayout create_descriptor_set_layout(
+    vk::Device device,
+    U32 binding_count,
+    vk::DescriptorSetLayoutBinding const* bindings);
+
+internal vk::PipelineLayout create_pipeline_layout(
+    vk::Device device,
+    vk::DescriptorSetLayout set_layout);
+
+internal vk::Pipeline create_vertex_input_library(
+    vk::Device device,
+    VertexInputLibDesc const& desc);
+
+internal vk::Pipeline create_pre_raster_library(
+    vk::Device device,
+    vk::PipelineLayout layout,
+    PreRasterLibDesc const& desc,
+    vk::PipelineShaderStageCreateInfo const* stages,
+    U32 stage_count);
+
+internal vk::Pipeline create_fragment_library(
+    vk::Device device,
+    vk::PipelineLayout layout,
+    FragmentLibDesc const& desc,
+    vk::PipelineShaderStageCreateInfo const* stages,
+    U32 stage_count);
+
+internal vk::Pipeline create_fragment_output_library(
+    vk::Device device,
+    FragmentOutputLibDesc const& desc);
+
+internal vk::Pipeline create_linked_pipeline(
+    vk::Device device,
+    vk::PipelineLayout layout,
+    U32 library_count,
+    vk::Pipeline const* libraries,
+    vk::Format color_format,
+    vk::Format depth_format);

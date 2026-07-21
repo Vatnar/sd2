@@ -6,7 +6,6 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
 option(IMGUI_TRACE_ALLOC "Trace imgui memory allocations" OFF)
-option(SD2_TRACY_ENABLE "Enable Tracy instrumentation" OFF)
 
 add_compile_options(
         -Wall -Wextra -Wpedantic
@@ -47,7 +46,7 @@ function(add_slang_shader_target TARGET)
     set(SHADERS_DIR ${CMAKE_CURRENT_BINARY_DIR}/assets/shaders)
     set(ENTRY_POINTS -entry vert_main -entry frag_main)
     set(ALL_OUTPUTS "")
-    foreach(SRC ${SHADER_SOURCES})
+    foreach (SRC ${SHADER_SOURCES})
         get_filename_component(FILENAME ${SRC} NAME_WLE)
         set(SPV_PATH ${SHADERS_DIR}/${FILENAME}.spv)
         list(APPEND ALL_OUTPUTS ${SPV_PATH})
@@ -61,7 +60,7 @@ function(add_slang_shader_target TARGET)
                 COMMENT "Compiling ${SRC}"
                 VERBATIM
         )
-    endforeach()
+    endforeach ()
     add_custom_command(
             OUTPUT ${SHADERS_DIR}
             COMMAND ${CMAKE_COMMAND} -E make_directory ${SHADERS_DIR}

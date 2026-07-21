@@ -19,11 +19,10 @@
 #include <glm/gtx/hash.hpp>
 
 // stb
-#include <stb/stb_image.h>
+#include <stb_image.h>
 
 // tinyobjloader
 #include <tiny_obj_loader.h>
-//
 // sd2
 #include "internal/base.hpp"
 #include "internal/window.hpp"

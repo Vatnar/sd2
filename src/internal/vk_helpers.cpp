@@ -1,6 +1,5 @@
 #include <string_view>
 
-#define SD2_TRACY_ENABLE
 #include "../sd2_inc.hpp"
 
 internal VKInstanceResult vk_create_vulkan_instance(GLFWwindow *glfw_window, Arena *arena) {

@@ -1,9 +1,10 @@
 #include "../sd2_inc.hpp"
 #include "imgui_helpers.hpp"
 #include <imgui.h>
-#include "imgui_impl_glfw.h"
-#include "imgui_impl_vulkan.h"
+#include <imgui_impl_glfw.h>
+#include <imgui_impl_vulkan.h>
 
+// TODO: Consider letting these use an arena instead.
 static void *imgui_alloc(size_t size, void *) {
   void *ptr = malloc(size);
 #ifdef IMGUI_TRACE_ALLOC

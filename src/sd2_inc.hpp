@@ -1,6 +1,9 @@
 #pragma once
 
 
+#define VK_EXT_debug_utils 1
+#define VK_KHR_surface 1
+#define VK_KHR_swapchain 1
 #define VULKAN_HPP_DISPATCH_LOADER_DYNAMIC 1
 #define VULKAN_HPP_NO_CONSTRUCTORS         1
 #define VULKAN_HPP_NO_STRUCT_CONSTRUCTORS  1
@@ -33,3 +36,5 @@
 #include "internal/base_arena.hpp"
 #include "internal/base_array.hpp"
 #include "internal/base_string.hpp"
+#include "internal/vk_destructor_stack.hpp"
+#include "internal/vk_arena.hpp"

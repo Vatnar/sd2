@@ -7,7 +7,7 @@ struct AppParams {
   S32 height{};
 };
 
-struct Key {
+struct RawKeyInput {
   BitSet<GLFW_KEY_LAST> pressed{};
   BitSet<GLFW_KEY_LAST> released{};
   BitSet<GLFW_KEY_LAST> held{};
@@ -16,7 +16,7 @@ struct Key {
   BitSet<GLFW_KEY_LAST> current{};
 };
 
-struct Mouse {
+struct RawMouseInput {
   BitSet<GLFW_MOUSE_BUTTON_LAST> pressed{};
   BitSet<GLFW_MOUSE_BUTTON_LAST> released{};
   BitSet<GLFW_MOUSE_BUTTON_LAST> held{};
@@ -32,6 +32,27 @@ struct Mouse {
   Vec2<F32> delta_scroll{};
 };
 
+struct KeyInput {
+  BitSet<GLFW_KEY_LAST> pressed{};
+  BitSet<GLFW_KEY_LAST> released{};
+  BitSet<GLFW_KEY_LAST> held{};
+};
+
+struct MouseInput {
+  BitSet<GLFW_MOUSE_BUTTON_LAST> pressed{};
+  BitSet<GLFW_MOUSE_BUTTON_LAST> released{};
+  BitSet<GLFW_MOUSE_BUTTON_LAST> held{};
+  Vec2<F32> pos_absolute{};
+  Vec2<F32> pos_delta{};
+  Vec2<F32> scroll_delta{};
+};
+
+struct Input {
+  KeyInput key{};
+  MouseInput mouse{};
+  // GamepadInput gamepad{}; // TODO:
+};
+
 struct AppWindow {
   GLFWwindow *glfw_window{};
   bool fullscreen = false;
@@ -41,66 +62,29 @@ struct AppWindow {
   int windowed_h = 600;
   bool framebuffer_resized = false;
 
-  Key key{};
-  Mouse mouse{};
+  RawKeyInput raw_key_input{};
+  RawMouseInput raw_mouse_input{};
 
-  Vec2<F64> scroll_delta_pending{};
-  // TODO: text char callback
 
-  static void dispatch_resize(GLFWwindow *glfw_window, S32 width, S32 height) {
-    AppWindow *window = static_cast<AppWindow *>(glfwGetWindowUserPointer(glfw_window));
-    window->framebuffer_resized = true;
+  // should only be called once per frame
+  void handle_input() {
+    handle_key_input();
+    handle_mouse_input();
   }
 
-  static void dispatch_scroll(GLFWwindow *glfw_window, F64 xoffset, F64 yoffset) {
-    AppWindow *window = static_cast<AppWindow *>(glfwGetWindowUserPointer(glfw_window));
-    window->mouse.current_scroll += {.x = static_cast<F32>(xoffset), .y = static_cast<F32>(yoffset)};
-  }
-
-  static void dispatch_close(GLFWwindow *glfw_window) {
-    glfwSetWindowShouldClose(glfw_window, true);
-  }
-
-  static void key_callback(GLFWwindow *glfw_window, int key, int scancode, int action, int mods) {
-    if (key < 0 || key >= GLFW_KEY_LAST)
-      return;
-    AppWindow *window = static_cast<AppWindow *>(glfwGetWindowUserPointer(glfw_window));
-    Key *key_input = &window->key;
-    if (action == GLFW_PRESS) {
-      key_input->current.set(key);
-    } else if (action == GLFW_RELEASE) {
-      key_input->current.clear(key);
-    }
-  }
-
-  static void mouse_button_callback(GLFWwindow *glfw_window, int button, int action, int mods) {
-    if (button < 0 || button >= GLFW_MOUSE_BUTTON_LAST)
-      return;
+  [[nodiscard]] Input get_frame_input() const;
 
 
-    AppWindow *window = static_cast<AppWindow *>(glfwGetWindowUserPointer(glfw_window));
-    Mouse *mouse_input = &window->mouse;
+  void handle_key_input();
+  void handle_mouse_input();
 
-    if (action == GLFW_PRESS) {
-      mouse_input->current.set(button);
-    } else if (action == GLFW_RELEASE) {
-      mouse_input->current.clear(button);
-    }
-  }
-
-  static void cursor_callback(GLFWwindow *glfw_window, F64 xpos, F64 ypos) {
-    AppWindow *window = static_cast<AppWindow *>(glfwGetWindowUserPointer(glfw_window));
-    window->mouse.current_pos = {.x = static_cast<F32>(xpos), .y = static_cast<F32>(ypos)};
-  }
-
-
-  static void dispatch_refresh(GLFWwindow *glfw_window) {
-    // NOTE: For now we render every frame anyways so we just ignore this. However, in the future if we have places
-    //  where we dont redraw for some reason. This needs to explicitly force a draw. Probably in some condition like
-    //  `if (request_frame || something_changed) -> do drawing`
-  }
-
-  static void dispatch_char(GLFWwindow *glfw_window, U32 keycode) {
-    // TODO: figure out how to handle this..
-  }
+  //~ window-glfw callbacks
+  static void dispatch_resize(GLFWwindow *glfw_window, S32 width, S32 height);
+  static void dispatch_scroll(GLFWwindow *glfw_window, F64 xoffset, F64 yoffset);
+  static void dispatch_close(GLFWwindow *glfw_window);
+  static void key_callback(GLFWwindow *glfw_window, int key, int scancode, int action, int mods);
+  static void mouse_button_callback(GLFWwindow *glfw_window, int button, int action, int mods);
+  static void cursor_callback(GLFWwindow *glfw_window, F64 xpos, F64 ypos);
+  static void dispatch_refresh(GLFWwindow *glfw_window);
+  static void dispatch_char(GLFWwindow *glfw_window, U32 keycode);
 };

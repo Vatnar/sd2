@@ -167,43 +167,136 @@ internal void debug_ui_debug_ui(TimeReport *report) {
                      ImGuiWindowFlags_AlwaysAutoResize)) {
       if (g_ui.debug_show_timings) {
         if (*g_dbg_ctx.paused) {
-          ImGui::TextColored({0.0f, 0.2f, 0.2f, 1.0f}, "Paused");
+          ImGui::TextColored(ImVec4(0.20f, 0.85f, 0.85f, 1.0f), "Paused");
         }
-        char label[32];
-        sprintf(label, "Timings  (bias: %d%%)", static_cast<S32>(report->alpha * 100.0f));
+
+        char label[64];
+        snprintf(label, sizeof(label), "Timings (EMA alpha: %.0f%%)", report->alpha * 100.0f);
         ImGui::SeparatorText(label);
-        if (ImGui::BeginTable("TimingsTable", 4, ImGuiTableFlags_SizingFixedFit)) {
+
+        constexpr ImGuiTableFlags table_flags =
+            ImGuiTableFlags_SizingFixedFit |
+            ImGuiTableFlags_BordersInnerV |
+            ImGuiTableFlags_RowBg;
+
+        auto text_warn = [](bool warn) {
+          return warn ? ImVec4(0.95f, 0.75f, 0.20f, 1.0f) : ImGui::GetStyleColorVec4(ImGuiCol_Text);
+        };
+
+        auto text_bad = [](bool bad) {
+          return bad ? ImVec4(1.00f, 0.35f, 0.35f, 1.0f) : ImGui::GetStyleColorVec4(ImGuiCol_Text);
+        };
+
+        auto sim_util_color = [&](F32 util) {
+          if (util >= 0.95f)
+            return ImVec4(1.00f, 0.35f, 0.35f, 1.0f);
+          if (util >= 0.75f)
+            return ImVec4(0.95f, 0.75f, 0.20f, 1.0f);
+          return ImGui::GetStyleColorVec4(ImGuiCol_Text);
+        };
+
+        //~ Render/frame pacing
+        if (ImGui::BeginTable("TimingsRenderTable", 4, table_flags)) {
           ImGui::TableNextRow();
           ImGui::TableSetColumnIndex(0);
-          ImGui::Text("ms:");
+          ImGui::TextUnformatted("Frame ms");
           ImGui::TableSetColumnIndex(1);
           ImGui::Text("%.2f", report->total_ms);
           ImGui::TableSetColumnIndex(2);
-          ImGui::Text("target:");
+          ImGui::TextUnformatted("Target ms");
           ImGui::TableSetColumnIndex(3);
           ImGui::Text("%.2f", report->target_ms);
 
           ImGui::TableNextRow();
           ImGui::TableSetColumnIndex(0);
-          ImGui::Text("work:");
+          ImGui::TextUnformatted("Work ms");
           ImGui::TableSetColumnIndex(1);
           ImGui::Text("%.2f", report->work_ms);
           ImGui::TableSetColumnIndex(2);
-          ImGui::Text("wait:");
+          ImGui::TextUnformatted("Wait ms");
           ImGui::TableSetColumnIndex(3);
           ImGui::Text("%.2f", report->wait_ms);
 
           ImGui::TableNextRow();
           ImGui::TableSetColumnIndex(0);
-          ImGui::Text("fps:");
+          ImGui::TextUnformatted("FPS");
           ImGui::TableSetColumnIndex(1);
-          ImGui::Text("%.2f", 1000.0 / report->total_ms);
+          ImGui::Text("%.2f", report->fps);
           ImGui::TableSetColumnIndex(2);
-          ImGui::Text("target:");
+          ImGui::TextUnformatted("Target FPS");
           ImGui::TableSetColumnIndex(3);
-          ImGui::Text("%.2f", 1000.0 / report->target_ms);
+          ImGui::Text("%.2f", report->target_fps);
 
           ImGui::EndTable();
+        }
+
+        //~ Fixed-step simulation
+        if (ImGui::BeginTable("TimingsSimTable", 4, table_flags)) {
+          ImGui::TableNextRow();
+          ImGui::TableSetColumnIndex(0);
+          ImGui::TextUnformatted("Frame dt ms");
+          ImGui::TableSetColumnIndex(1);
+          ImGui::Text("%.2f", report->frame_dt_ms);
+          ImGui::TableSetColumnIndex(2);
+          ImGui::TextUnformatted("Fixed dt ms");
+          ImGui::TableSetColumnIndex(3);
+          ImGui::Text("%.3f", report->fixed_dt_ms);
+
+          ImGui::TableNextRow();
+          ImGui::TableSetColumnIndex(0);
+          ImGui::TextUnformatted("Fixed Hz");
+          ImGui::TableSetColumnIndex(1);
+          ImGui::TextColored(text_warn(report->fixed_hz_actual < report->fixed_hz_target * 0.95f),
+                             "%.2f",
+                             report->fixed_hz_actual);
+          ImGui::TableSetColumnIndex(2);
+          ImGui::TextUnformatted("Target Hz");
+          ImGui::TableSetColumnIndex(3);
+          ImGui::Text("%.2f", report->fixed_hz_target);
+
+          ImGui::TableNextRow();
+          ImGui::TableSetColumnIndex(0);
+          ImGui::TextUnformatted("Steps/frame");
+          ImGui::TableSetColumnIndex(1);
+          ImGui::Text("%.2f", report->steps_per_frame);
+          ImGui::TableSetColumnIndex(2);
+          ImGui::TextUnformatted("Sim ms");
+          ImGui::TableSetColumnIndex(3);
+          ImGui::Text("%.2f", report->sim_ms);
+
+          ImGui::TableNextRow();
+          ImGui::TableSetColumnIndex(0);
+          ImGui::TextUnformatted("Accumulator ms");
+          ImGui::TableSetColumnIndex(1);
+          ImGui::Text("%.2f", report->accumulator_ms);
+          ImGui::TableSetColumnIndex(2);
+          ImGui::TextUnformatted("Accumulator alpha");
+          ImGui::TableSetColumnIndex(3);
+          ImGui::Text("%.2f", report->accumulator_alpha);
+
+          ImGui::TableNextRow();
+          ImGui::TableSetColumnIndex(0);
+          ImGui::TextUnformatted("Dropped ms");
+          ImGui::TableSetColumnIndex(1);
+          ImGui::TextColored(text_bad(report->dropped_ms > 0.01f),
+                             "%.2f",
+                             report->dropped_ms);
+          ImGui::TableSetColumnIndex(2);
+          ImGui::TextUnformatted("Sim util");
+          ImGui::TableSetColumnIndex(3);
+          ImGui::TextColored(sim_util_color(report->sim_utilization),
+                             "%.2f%%",
+                             report->sim_utilization * 100.0f);
+
+          ImGui::EndTable();
+        }
+
+        if (report->hit_max_steps) {
+          ImGui::TextColored(ImVec4(1.00f, 0.35f, 0.35f, 1.0f),
+                             "Warning: hit max fixed steps per frame");
+        } else if (report->dropped_ms > 0.01f) {
+          ImGui::TextColored(ImVec4(0.95f, 0.75f, 0.20f, 1.0f),
+                             "Warning: simulation backlog detected");
         }
       }
       if (g_ui.debug_show_last_command && g_dbg_ctx.last_command) {
@@ -212,13 +305,13 @@ internal void debug_ui_debug_ui(TimeReport *report) {
       }
       if (g_ui.debug_show_cursor_info && g_dbg_ctx.window) {
         ImGui::SeparatorText("Cursor");
-        Mouse *mouse = &g_dbg_ctx.window->mouse;
+        RawMouseInput *mouse = &g_dbg_ctx.window->raw_mouse_input;
         ImGui::Text("Current : { %.0f, %.0f }", mouse->current_pos.x, mouse->current_pos.y);
         ImGui::Text("Delta   : { %.0f, %.0f }", mouse->delta_pos.x, mouse->delta_pos.y);
       }
       if (g_ui.debug_show_scroll_info && g_dbg_ctx.window) {
         ImGui::SeparatorText("Scroll");
-        Mouse *mouse = &g_dbg_ctx.window->mouse;
+        RawMouseInput *mouse = &g_dbg_ctx.window->raw_mouse_input;
         ImGui::Text("Delta  : { %.0f, %.0f }", mouse->delta_scroll.x, mouse->delta_scroll.y);
       }
 

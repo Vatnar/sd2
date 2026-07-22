@@ -28,9 +28,41 @@ FORCE_INLINE internal F32 ema_update(F32 current_avg, F32 new_val, F32 alpha) {
 }
 
 struct TimeReport {
-  F32 total_ms{}, target_ms{}, work_ms{}, wait_ms{};
-  F32 fps{}, target_fps{}, alpha{};
+  F32 target_ms{};
+  F32 target_fps{};
+  F32 total_ms{};
+  F32 work_ms{};
+  F32 wait_ms{};
+  F32 fps{};
+  F32 alpha{};
+
+  F32 frame_dt_ms{};
+  F32 fixed_dt_ms{};
+  F32 fixed_hz_target{};
+  F32 fixed_hz_actual{};
+  F32 sim_ms{};
+  F32 steps_per_frame{};
+  F32 accumulator_ms{};
+  F32 accumulator_alpha{};
+  F32 dropped_ms{};
+  F32 sim_utilization{};
+  bool hit_max_steps{};
+  F32 sim_work_ms{};
 };
+
+struct SimTimingSample {
+  F32 frame_dt_ms{};
+  F32 fixed_dt_ms{};
+  F32 fixed_hz_target{};
+  F32 fixed_hz_actual{};
+  F32 sim_ms{};
+  F32 steps_per_frame{};
+  F32 accumulator_ms{};
+  F32 accumulator_alpha{};
+  F32 dropped_ms{};
+  bool hit_max_steps{};
+};
+
 
 // Snapshots performance every report_interval waits
 // TODO: consider averaging the report for last 10 frames or whatever, or like for all time scaled by recency
@@ -48,6 +80,12 @@ struct FrameClock {
 
   FORCE_INLINE void mark_work_done() { clock_gettime(CLOCK_MONOTONIC, &work_end); }
 
+  void submit_sim_sample(U32 fixed_steps,
+                         F32 frame_dt,
+                         F32 fixed_dt,
+                         F32 accumulator,
+                         F32 sim_work_ms,
+                         bool hit_max_steps);
   void wait_for_target();
 
   [[nodiscard]] FORCE_INLINE F64 total_ms() const { return diff_ms(frame_start, frame_end); }
@@ -59,9 +97,6 @@ struct FrameClock {
 
 constexpr U32 MAX_INSTANCE_EXTENSIONS = 16;
 internal U32 glfw_get_required_extensions(char const **out_extensions, U32 max_extensions);
-
-internal void handle_key_input(Key *input);
-internal void handle_mouse_input(Mouse *mouse);
 
 struct Camera {
   glm::vec3 camera_pos;
@@ -83,3 +118,11 @@ struct Camera {
 
   static Camera from_pos(glm::vec3 pos);
 };
+
+FORCE_INLINE internal void toggle_cursor();
+
+FORCE_INLINE internal void show_cursor();
+
+FORCE_INLINE internal void hide_cursor();
+
+FORCE_INLINE internal void toggle_fullscreen();

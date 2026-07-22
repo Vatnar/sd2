@@ -269,6 +269,15 @@ struct Vec3 {
     T w;
     T b;
   };
+
+  Vec3<float> operator*(F32 scalar) const {
+    return
+    {
+        x * scalar,
+        y * scalar,
+        z * scalar
+    };
+  }
 };
 
 template<typename T>

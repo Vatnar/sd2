@@ -1,8 +1,9 @@
 #include <string_view>
 
+#include "imgui_helpers.hpp"
 #include "../sd2_inc.hpp"
 
-internal VKInstanceResult vk_create_vulkan_instance(GLFWwindow *glfw_window, Arena *arena) {
+internal VKInstanceResult vk_create_vulkan_instance(GLFWwindow *glfw_window, VKArena *arena) {
   VKInstanceResult res{};
 
   res.get_instance_proc_addr =
@@ -35,7 +36,7 @@ internal VKInstanceResult vk_create_vulkan_instance(GLFWwindow *glfw_window, Are
   };
 #endif
 
-  const char **extensions = arena->push_array<const char *>(MAX_INSTANCE_EXTENSIONS);
+  const char **extensions = arena->arena->push_array<const char *>(MAX_INSTANCE_EXTENSIONS);
   U32 ext_count = glfw_get_required_extensions(extensions, MAX_INSTANCE_EXTENSIONS);
   Array vk_validation_layers = {"VK_LAYER_KHRONOS_validation"};
 
@@ -66,7 +67,8 @@ internal VKInstanceResult vk_create_vulkan_instance(GLFWwindow *glfw_window, Are
 #endif
 
   VkSurfaceKHR raw_surface{};
-  if (glfwCreateWindowSurface(res.instance, glfw_window, nullptr, &raw_surface) != VK_SUCCESS) {
+  if (glfwCreateWindowSurface(static_cast<VkInstance>(res.instance), glfw_window, nullptr, &raw_surface) !=
+      VK_SUCCESS) {
     TRAP();
   }
   res.surface = raw_surface;
@@ -195,6 +197,7 @@ internal VKRatedDevice vk_pick_best_physical_device(vk::Instance instance, vk::S
 
   vk::PhysicalDevice best_device = nullptr;
   U32 max_score = 0;
+  VKQueueFamilyIndices best_indices{};
 
   for (U32 i = 0; i < device_count; i++) {
     vk::PhysicalDevice &device = devices[i];
@@ -229,10 +232,11 @@ internal VKRatedDevice vk_pick_best_physical_device(vk::Instance instance, vk::S
     if (score > max_score) {
       max_score = score;
       best_device = device;
+      best_indices = indices;
     }
   }
   scratch.end();
-  return {.device = best_device, .score = max_score};
+  return {.device = best_device, .score = max_score, .queue_family_indices = best_indices};
 }
 
 internal bool vk_check_validation_layer_support() {
@@ -269,17 +273,22 @@ internal U32 vk_find_memory_type(vk::PhysicalDevice vk_phys_dev, U32 type_filter
 
 
 [[maybe_unused]] internal std::pair<vk::Buffer, vk::DeviceMemory> vk_create_buffer(vk::PhysicalDevice vk_phys_dev,
-  vk::Device vk_device,
-  vk::DeviceSize size,
-  vk::BufferUsageFlags usage,
-  vk::MemoryPropertyFlags properties) {
+      vk::Device vk_device,
+      vk::DeviceSize size,
+      vk::BufferUsageFlags usage,
+      vk::MemoryPropertyFlags properties,
+      VKArena *arena
+    ) {
   vk::BufferCreateInfo buffer_info{.size = size, .usage = usage, .sharingMode = vk::SharingMode::eExclusive};
-  vk::Buffer buffer = vk_abort_if_error(vk_device.createBuffer(buffer_info));
+  vk::Buffer buffer = arena->ds.push(vk_abort_if_error(vk_device.createBufferUnique(buffer_info)));
+
   vk::MemoryRequirements memory_requirements = vk_device.getBufferMemoryRequirements(buffer);
+
   vk::MemoryAllocateInfo alloc_info = {
       .allocationSize = memory_requirements.size,
       .memoryTypeIndex = vk_find_memory_type(vk_phys_dev, memory_requirements.memoryTypeBits, properties)};
-  vk::DeviceMemory buffer_memory = vk_abort_if_error(vk_device.allocateMemory(alloc_info));
+  vk::DeviceMemory buffer_memory = arena->ds.push(vk_abort_if_error(vk_device.allocateMemoryUnique(alloc_info)));
+
   vk_abort_if_error(vk_device.bindBufferMemory(buffer, buffer_memory, 0));
   return {buffer, buffer_memory};
 }
@@ -330,51 +339,54 @@ internal void vk_destroy_gpu_arena(vk::Device device, VKGpuArena *arena) {
   *arena = {};
 }
 
-internal VKDepthResources vk_create_depth_resources(vk::PhysicalDevice vk_phys_dev,
-                                                    vk::Device vk_device,
-                                                    VKGpuArena *device_arena,
-                                                    vk::Extent2D extent,
-                                                    vk::SampleCountFlagBits msaa_samples) {
+internal void vk_create_depth_resources(VKSwapchainConfig *config,
+                                        VKSwapchainState *state,
+                                        VKArena *arena) {
   Array format_candidates = {vk::Format::eD32Sfloat, vk::Format::eD32SfloatS8Uint, vk::Format::eD24UnormS8Uint};
   vk::Format format = find_supported_format(format_candidates,
                                             format_candidates.size(),
                                             vk::ImageTiling::eOptimal,
                                             vk::FormatFeatureFlagBits::eDepthStencilAttachment,
-                                            vk_phys_dev);
-  VKDepthResources depth{};
-  depth.tex.mip_levels = 1;
-  std::tie(depth.tex.image, depth.tex.image_alloc) = vk_create_image(vk_phys_dev,
-                                                                     vk_device,
-                                                                     extent.width,
-                                                                     extent.height,
-                                                                     1,
-                                                                     format,
-                                                                     vk::ImageTiling::eOptimal,
-                                                                     vk::ImageUsageFlagBits::eDepthStencilAttachment,
-                                                                     device_arena,
-                                                                     msaa_samples);
-  depth.tex.image_view = vk_create_image_view(vk_device, depth.tex.image, format, vk::ImageAspectFlagBits::eDepth, 1);
+                                            config->phys_dev);
+  auto &depth = state->depth;
+  depth.mip_levels = 1;
+  std::tie(depth.image, depth.image_alloc) = vk_create_image(config->phys_dev,
+                                                             config->dev,
+                                                             state->extent.width,
+                                                             state->extent.height,
+                                                             1,
+                                                             format,
+                                                             vk::ImageTiling::eOptimal,
+                                                             vk::ImageUsageFlagBits::eDepthStencilAttachment,
+                                                             &config->sc_arena,
+                                                             arena,
+                                                             config->msaa_samples);
+  depth.image_view = vk_create_image_view(config->dev, depth.image, format, vk::ImageAspectFlagBits::eDepth, 1, arena);
   depth.format = format;
-  return depth;
 }
 
 internal std::pair<vk::Buffer, VKGpuArenaAlloc> vk_create_buffer(vk::PhysicalDevice vk_phys_dev,
                                                                  vk::Device vk_device,
                                                                  vk::DeviceSize size,
                                                                  vk::BufferUsageFlags usage,
-                                                                 VKGpuArena *arena) {
+                                                                 VKGpuArena *gpu_arena,
+                                                                 VKArena *arena) {
   (void)vk_phys_dev;
 
   vk::BufferCreateInfo buffer_info{.size = size, .usage = usage, .sharingMode = vk::SharingMode::eExclusive};
-  vk::Buffer buffer = vk_abort_if_error(vk_device.createBuffer(buffer_info));
+  vk::Buffer buffer = arena->ds.push(vk_abort_if_error(vk_device.createBufferUnique(buffer_info)));
+
   vk::MemoryRequirements mem_reqs = vk_device.getBufferMemoryRequirements(buffer);
-  ASSERT_ALWAYS(mem_reqs.memoryTypeBits & (1u << arena->memory_type_index));
-  vk::DeviceSize offset = vk_gpu_arena_alloc(arena, mem_reqs.size, mem_reqs.alignment);
-  vk_abort_if_error(vk_device.bindBufferMemory(buffer, arena->memory, offset));
-  void *mapped = arena->mapped_ptr ? static_cast<char *>(arena->mapped_ptr) + offset : nullptr;
+
+  ASSERT_ALWAYS(mem_reqs.memoryTypeBits & (1u << gpu_arena->memory_type_index));
+
+  vk::DeviceSize offset = vk_gpu_arena_alloc(gpu_arena, mem_reqs.size, mem_reqs.alignment);
+
+  vk_abort_if_error(vk_device.bindBufferMemory(buffer, gpu_arena->memory, offset));
+  void *mapped = gpu_arena->mapped_ptr ? static_cast<char *>(gpu_arena->mapped_ptr) + offset : nullptr;
   return {
       buffer,
-      {.memory = arena->memory, .offset = offset, .mapped = mapped}
+      {.memory = gpu_arena->memory, .offset = offset, .mapped = mapped}
   };
 }
 
@@ -386,7 +398,8 @@ internal std::pair<vk::Image, VKGpuArenaAlloc> vk_create_image(vk::PhysicalDevic
                                                                vk::Format format,
                                                                vk::ImageTiling tiling,
                                                                vk::ImageUsageFlags usage,
-                                                               VKGpuArena *arena,
+                                                               VKGpuArena *gpu_arena,
+                                                               VKArena *arena,
                                                                vk::SampleCountFlagBits num_samples) {
   (void)vk_phys_dev;
 
@@ -402,15 +415,15 @@ internal std::pair<vk::Image, VKGpuArenaAlloc> vk_create_image(vk::PhysicalDevic
       .sharingMode = vk::SharingMode::eExclusive,
       .initialLayout = vk::ImageLayout::eUndefined,
   };
-  vk::Image image = vk_abort_if_error(vk_device.createImage(image_info));
+  vk::Image image = arena->ds.push(vk_abort_if_error(vk_device.createImageUnique(image_info)));
   vk::MemoryRequirements mem_reqs = vk_device.getImageMemoryRequirements(image);
-  ASSERT_ALWAYS(mem_reqs.memoryTypeBits & (1u << arena->memory_type_index));
-  vk::DeviceSize offset = vk_gpu_arena_alloc(arena, mem_reqs.size, mem_reqs.alignment);
-  vk_abort_if_error(vk_device.bindImageMemory(image, arena->memory, offset));
-  void *mapped = arena->mapped_ptr ? static_cast<char *>(arena->mapped_ptr) + offset : nullptr;
+  ASSERT_ALWAYS(mem_reqs.memoryTypeBits & (1u << gpu_arena->memory_type_index));
+  vk::DeviceSize offset = vk_gpu_arena_alloc(gpu_arena, mem_reqs.size, mem_reqs.alignment);
+  vk_abort_if_error(vk_device.bindImageMemory(image, gpu_arena->memory, offset));
+  void *mapped = gpu_arena->mapped_ptr ? static_cast<char *>(gpu_arena->mapped_ptr) + offset : nullptr;
   return {
       image,
-      {.memory = arena->memory, .offset = offset, .mapped = mapped}
+      {.memory = gpu_arena->memory, .offset = offset, .mapped = mapped}
   };
 }
 
@@ -465,14 +478,15 @@ internal vk::ImageView vk_create_image_view(vk::Device device,
                                             vk::Image image,
                                             vk::Format format,
                                             vk::ImageAspectFlags aspect_mask,
-                                            U32 mip_levels) {
+                                            U32 mip_levels,
+                                            VKArena *arena) {
   vk::ImageViewCreateInfo view_info{
       .image = image,
       .viewType = vk::ImageViewType::e2D,
       .format = format,
       .subresourceRange = {.aspectMask = aspect_mask, .levelCount = mip_levels, .layerCount = 1}
   };
-  return vk_abort_if_error(device.createImageView(view_info));
+  return arena->ds.push(vk_abort_if_error(device.createImageViewUnique(view_info)));
 }
 
 
@@ -517,126 +531,31 @@ vk::Format find_supported_format(vk::Format *candidates,
   INVALID_PATH;
 }
 
-internal void vk_recreate_swapchain(GLFWwindow *glfw_window,
-                                    vk::Device vk_device,
-                                    SwapchainResources *sc,
-                                    vk::SwapchainKHR &vk_swapchain,
-                                    vk::PhysicalDevice vk_phys_dev,
-                                    vk::SurfaceKHR vk_surface,
-                                    vk::Extent2D &swapchain_extent,
-                                    vk::Format swapchain_image_format,
-                                    vk::ColorSpaceKHR swapchain_color_space,
-                                    vk::PresentModeKHR present_mode,
-                                    vk::Image *depth_image,
-                                    vk::ImageView *depth_image_view,
-                                    vk::SampleCountFlagBits msaa_samples,
-                                    VKGpuArena *device_arena) {
-  S32 width = 0, height = 0;
-  glfwGetFramebufferSize(glfw_window, &width, &height);
-  while (width == 0 || height == 0) {
-    glfwGetFramebufferSize(glfw_window, &width, &height);
-    glfwWaitEvents();
+internal void vk_recreate_swapchain(VKSwapchainConfig *config, VKSwapchainState *state) {
+  vk_abort_if_error(config->dev.waitIdle());
+
+  state->extent = vk_get_extent(config, state->extent.width, state->extent.height);
+
+  for (U32 i = 0; i < SC_MAX_GENERATIONS; ++i) {
+    config->swapchain_pool[i].sc_res_arena.drain();
+    for (U32 j = 0; j < SC_MAX_IMAGES; ++j) {
+      config->swapchain_pool[i].images_in_flight[j] = nullptr;
+      config->swapchain_pool[i].image_initialized[j] = false;
+    }
   }
 
-  vk_abort_if_error(vk_device.waitIdle());
+  config->sc_arena.offset = 0;
 
-  for (U32 i = 0; i < sc->image_count; ++i) {
-    vk_device.destroyImageView(sc->msaa_image_views[i]);
-    vk_device.destroyImage(sc->msaa_images[i]);
-    vk_device.destroySemaphore(sc->render_finished_sems[i]);
-    vk_device.destroyImageView(sc->image_views[i], nullptr);
-    sc->image_initialized[i] = false;
-  }
+  vk::SwapchainKHR old_swapchain = state->swapchain;
+  vk_create_swapchain(config, state, old_swapchain);
 
-  vk::SwapchainKHR old_swapchain = vk_swapchain;
-
-  vk::SurfaceCapabilitiesKHR capabilities = vk_abort_if_error(vk_phys_dev.getSurfaceCapabilitiesKHR(vk_surface));
-  vk::Extent2D new_extent = capabilities.currentExtent;
-
-  // TODO: drivers rarely return 0xFFFFFFFF for currentextent, instead they return exact changing
-  // physical pixel sizes. Which makes it take arbitrary dimensions the surface reported mid frame.
-  if (new_extent.width == std::numeric_limits<U32>::max()) {
-    new_extent.width =
-        std::clamp(static_cast<U32>(width), capabilities.minImageExtent.width, capabilities.maxImageExtent.width);
-    new_extent.height =
-        std::clamp(static_cast<U32>(height), capabilities.minImageExtent.height, capabilities.maxImageExtent.height);
-  }
-
-
-  swapchain_extent = new_extent;
-
-  VKQueueFamilyIndices indices = vk_find_queue_families(vk_phys_dev, vk_surface);
-  U32 queue_family_indices[] = {indices.graphics_index, indices.present_index};
-
-  U32 desired_count = capabilities.minImageCount + 1;
-  if (capabilities.maxImageCount > 0 && desired_count > capabilities.maxImageCount) {
-    desired_count = capabilities.maxImageCount;
-  }
-
-  vk::SwapchainCreateInfoKHR swapchain_info{
-      .surface = vk_surface,
-      .minImageCount = desired_count,
-      .imageFormat = swapchain_image_format,
-      .imageColorSpace = swapchain_color_space,
-      .imageExtent = swapchain_extent,
-      .imageArrayLayers = 1,
-      .imageUsage = vk::ImageUsageFlagBits::eColorAttachment,
-      .preTransform = capabilities.currentTransform,
-      .compositeAlpha = vk::CompositeAlphaFlagBitsKHR::eOpaque,
-      .presentMode = present_mode,
-      .clipped = true,
-      .oldSwapchain = old_swapchain,
-  };
-
-  if (indices.graphics_index != indices.present_index) {
-    swapchain_info.imageSharingMode = vk::SharingMode::eConcurrent;
-    swapchain_info.queueFamilyIndexCount = 2;
-    swapchain_info.pQueueFamilyIndices = queue_family_indices;
-  } else {
-    swapchain_info.imageSharingMode = vk::SharingMode::eExclusive;
-  }
-
-  vk_swapchain = vk_abort_if_error(vk_device.createSwapchainKHR(swapchain_info));
   if (old_swapchain) {
-    vk_device.destroySwapchainKHR(old_swapchain, nullptr);
+    config->dev.destroySwapchainKHR(old_swapchain, nullptr);
   }
 
-  vk_abort_if_error(vk_device.getSwapchainImagesKHR(vk_swapchain, &sc->image_count, nullptr));
-  vk_abort_if_error(vk_device.getSwapchainImagesKHR(vk_swapchain, &sc->image_count, sc->images));
+  vk_create_swapchain_resources(config, state);
 
-  for (U64 i = 0; i < sc->image_count; ++i) {
-    sc->image_views[i] =
-        vk_create_image_view(vk_device, sc->images[i], swapchain_image_format, vk::ImageAspectFlagBits::eColor, 1);
-    auto [msaa_img, msaa_alloc] = vk_create_image(vk_phys_dev,
-                                                  vk_device,
-                                                  swapchain_extent.width,
-                                                  swapchain_extent.height,
-                                                  1,
-                                                  swapchain_image_format,
-                                                  vk::ImageTiling::eOptimal,
-                                                  vk::ImageUsageFlagBits::eColorAttachment,
-                                                  device_arena,
-                                                  msaa_samples);
-    sc->msaa_images[i] = msaa_img;
-    sc->msaa_image_views[i] =
-        vk_create_image_view(vk_device, msaa_img, swapchain_image_format, vk::ImageAspectFlagBits::eColor, 1);
-    sc->render_finished_sems[i] = vk_abort_if_error(vk_device.createSemaphore({}));
-    sc->images_in_flight[i] = vk::Fence{};
-    sc->image_initialized[i] = false;
-  }
-
-  if (depth_image)
-    vk_device.destroyImage(*depth_image);
-  if (depth_image_view)
-    vk_device.destroyImageView(*depth_image_view);
-
-  VKDepthResources depth = vk_create_depth_resources(vk_phys_dev,
-                                                     vk_device,
-                                                     device_arena,
-                                                     swapchain_extent,
-                                                     msaa_samples);
-  *depth_image = depth.tex.image;
-  *depth_image_view = depth.tex.image_view;
+  vk_create_depth_resources(config, state, &config->swapchain_pool[state->pool_gen].sc_res_arena);
 }
 
 void vk_generate_mip_maps(vk::PhysicalDevice phys_dev,
@@ -715,12 +634,6 @@ internal vk::SampleCountFlagBits vk_get_max_usable_sample_count(vk::PhysicalDevi
   vk::PhysicalDeviceProperties physical_device_properties = device.getProperties();
   vk::SampleCountFlags counts = physical_device_properties.limits.framebufferColorSampleCounts &
                                 physical_device_properties.limits.framebufferDepthSampleCounts;
-  if (counts & vk::SampleCountFlagBits::e64)
-    return vk::SampleCountFlagBits::e64;
-  if (counts & vk::SampleCountFlagBits::e32)
-    return vk::SampleCountFlagBits::e32;
-  if (counts & vk::SampleCountFlagBits::e16)
-    return vk::SampleCountFlagBits::e16;
   if (counts & vk::SampleCountFlagBits::e8)
     return vk::SampleCountFlagBits::e8;
   if (counts & vk::SampleCountFlagBits::e4)
@@ -732,8 +645,9 @@ internal vk::SampleCountFlagBits vk_get_max_usable_sample_count(vk::PhysicalDevi
 }
 
 internal std::tuple<vk::Device, vk::Queue, vk::Queue>
-vk_create_logical_device(vk::PhysicalDevice phys_dev, VKQueueFamilyIndices queue_indices) {
+vk_create_logical_device(vk::PhysicalDevice phys_dev, vk::SurfaceKHR surface) {
   float queue_priority = 1.0f;
+  VKQueueFamilyIndices queue_indices = vk_find_queue_families(phys_dev, surface);
   Array<vk::DeviceQueueCreateInfo, 2> queue_infos{};
   U32 queue_info_count = 0;
   queue_infos[queue_info_count++] = vk::DeviceQueueCreateInfo{
@@ -762,20 +676,38 @@ vk_create_logical_device(vk::PhysicalDevice phys_dev, VKQueueFamilyIndices queue
   return {vk_device, graphics_queue, present_queue};
 }
 
-internal std::tuple<vk::Format, vk::ColorSpaceKHR, vk::PresentModeKHR, vk::Extent2D>
-vk_create_swapchain_config(vk::PhysicalDevice dev, vk::SurfaceKHR surface, U32 width, U32 height, Arena *arena) {
-  vk::SurfaceCapabilitiesKHR capabilities{};
-  vk_abort_if_error(dev.getSurfaceCapabilitiesKHR(surface, &capabilities));
+VKSwapchainConfig
+vk_create_swapchain_config(vk::Device device,
+                           vk::PhysicalDevice phys_dev,
+                           vk::SurfaceKHR surface,
+                           VKQueueFamilyIndices queue_indices,
+                           VKGpuArena *device_arena,
+                           Arena *arena) {
+  VKSwapchainConfig out{};
+  out.dev = device,
+      out.phys_dev = phys_dev;
+  out.queue_indices = queue_indices;
+  out.surface = surface;
+  out.device_arena = device_arena;
+  out.sc_arena = vk_create_gpu_arena(phys_dev,
+                                     device,
+                                     vk_find_memory_type(phys_dev,
+                                                         UINT32_MAX,
+                                                         vk::MemoryPropertyFlagBits::eDeviceLocal),
+                                     gb(2));
+
   U32 format_count = 0;
-  vk_abort_if_error(dev.getSurfaceFormatsKHR(surface, &format_count, nullptr));
+  vk_abort_if_error(phys_dev.getSurfaceFormatsKHR(surface, &format_count, nullptr));
   auto *formats = arena->push_array<vk::SurfaceFormatKHR>(format_count);
-  vk_abort_if_error(dev.getSurfaceFormatsKHR(surface, &format_count, formats));
+  vk_abort_if_error(phys_dev.getSurfaceFormatsKHR(surface, &format_count, formats));
   U32 mode_count = 0;
-  vk_abort_if_error(dev.getSurfacePresentModesKHR(surface, &mode_count, nullptr));
+  vk_abort_if_error(phys_dev.getSurfacePresentModesKHR(surface, &mode_count, nullptr));
   auto *present_modes = arena->push_array<vk::PresentModeKHR>(mode_count);
-  vk_abort_if_error(dev.getSurfacePresentModesKHR(surface, &mode_count, present_modes));
+  vk_abort_if_error(phys_dev.getSurfacePresentModesKHR(surface, &mode_count, present_modes));
+
   vk::Format chosen_format = vk::Format::eB8G8R8A8Srgb;
   vk::ColorSpaceKHR chosen_color_space = vk::ColorSpaceKHR::eSrgbNonlinear;
+
   bool format_found = false;
   for (U32 i = 0; i < format_count; ++i) {
     if (formats[i].format == chosen_format && formats[i].colorSpace == chosen_color_space) {
@@ -798,43 +730,51 @@ vk_create_swapchain_config(vk::PhysicalDevice dev, vk::SurfaceKHR surface, U32 w
   if (!mode_found) {
     chosen_present_mode = vk::PresentModeKHR::eFifo;
   }
+  out.image_format = chosen_format;
+  out.color_space = chosen_color_space;
+  out.present_mode = chosen_present_mode;
+  out.msaa_samples = vk_get_max_usable_sample_count(phys_dev);
+  return out;
+}
+
+vk::Extent2D vk_get_extent(VKSwapchainConfig *config, U32 width, U32 height) {
+  vk::SurfaceCapabilitiesKHR capabilities{};
+  vk_abort_if_error(config->phys_dev.getSurfaceCapabilitiesKHR(config->surface, &capabilities));
+
   vk::Extent2D swapchain_extent = capabilities.currentExtent;
   if (swapchain_extent.width == 0xFFFFFFFF) {
     swapchain_extent.width = width;
     swapchain_extent.height = height;
   }
-  return {chosen_format, chosen_color_space, chosen_present_mode, swapchain_extent};
+  return swapchain_extent;
 }
 
-internal vk::SwapchainKHR vk_create_swapchain(vk::PhysicalDevice vk_phys_dev,
-                                              vk::Device vk_device,
-                                              vk::SurfaceKHR vk_surface,
-                                              vk::Format chosen_format,
-                                              vk::ColorSpaceKHR chosen_color_space,
-                                              vk::Extent2D swapchain_extent,
-                                              vk::PresentModeKHR chosen_present_mode,
-                                              VKQueueFamilyIndices queue_indices) {
+internal void vk_create_swapchain(VKSwapchainConfig *config, VKSwapchainState *state, vk::SwapchainKHR old_swapchain) {
   vk::SurfaceCapabilitiesKHR capabilities{};
-  vk_abort_if_error(vk_phys_dev.getSurfaceCapabilitiesKHR(vk_surface, &capabilities));
+  vk_abort_if_error(config->phys_dev.getSurfaceCapabilitiesKHR(config->surface, &capabilities));
   U32 desired_image_count = capabilities.minImageCount + 1;
   if (capabilities.maxImageCount > 0 && desired_image_count > capabilities.maxImageCount) {
     desired_image_count = capabilities.maxImageCount;
   }
-  Array queue_indices_array = {queue_indices.graphics_index, queue_indices.present_index};
+  U32 graphics_index = config->queue_indices.graphics_index;
+  U32 present_index = config->queue_indices.present_index;
+  Array queue_indices_array = {graphics_index, present_index};
+
+
   vk::SharingMode sharing_mode = vk::SharingMode::eExclusive;
   U32 queue_family_index_count = 0;
   U32 *p_queue_family_indices = nullptr;
-  if (queue_indices.graphics_index != queue_indices.present_index) {
+  if (graphics_index != present_index) {
     sharing_mode = vk::SharingMode::eConcurrent;
     queue_family_index_count = 2;
     p_queue_family_indices = queue_indices_array;
   }
   vk::SwapchainCreateInfoKHR swapchain_info{
-      .surface = vk_surface,
+      .surface = config->surface,
       .minImageCount = desired_image_count,
-      .imageFormat = chosen_format,
-      .imageColorSpace = chosen_color_space,
-      .imageExtent = swapchain_extent,
+      .imageFormat = config->image_format,
+      .imageColorSpace = config->color_space,
+      .imageExtent = state->extent,
       .imageArrayLayers = 1,
       .imageUsage = vk::ImageUsageFlagBits::eColorAttachment,
       .imageSharingMode = sharing_mode,
@@ -842,34 +782,30 @@ internal vk::SwapchainKHR vk_create_swapchain(vk::PhysicalDevice vk_phys_dev,
       .pQueueFamilyIndices = p_queue_family_indices,
       .preTransform = capabilities.currentTransform,
       .compositeAlpha = vk::CompositeAlphaFlagBitsKHR::eOpaque,
-      .presentMode = chosen_present_mode,
+      .presentMode = config->present_mode,
       .clipped = true,
-      .oldSwapchain = nullptr,
+      .oldSwapchain = old_swapchain,
   };
-  return vk_abort_if_error(vk_device.createSwapchainKHR(swapchain_info));
+  state->swapchain = vk_abort_if_error(config->dev.createSwapchainKHR(swapchain_info));
 }
 
-internal std::tuple<SwapchainResources *, vk::CommandPool>
-vk_create_swapchain_resources(vk::Device vk_device,
-                              vk::PhysicalDevice vk_phys_dev,
-                              vk::SwapchainKHR swapchain,
-                              vk::Extent2D swapchain_extent,
-                              vk::Format chosen_format,
-                              vk::SampleCountFlagBits msaa_samples,
-                              VKQueueFamilyIndices queue_indices,
-                              VKGpuArena *device_arena,
-                              Array<SwapchainResources, SC_MAX_GENERATIONS> *swapchain_pool,
-                              Array<vk::Fence, MAX_FRAMES_IN_FLIGHT> *in_flight_fences,
-                              Array<vk::Semaphore, MAX_FRAMES_IN_FLIGHT> *acquire_sems,
-                              Array<vk::CommandBuffer, MAX_FRAMES_IN_FLIGHT> *command_buffers) {
-  SwapchainResources *sc = &*swapchain_pool[0];
-  vk_abort_if_error(vk_device.getSwapchainImagesKHR(swapchain, &sc->image_count, nullptr));
-  vk_abort_if_error(vk_device.getSwapchainImagesKHR(swapchain, &sc->image_count, sc->images));
+internal vk::CommandPool
+vk_create_swapchain_resources(VKSwapchainConfig *config,
+                              VKSwapchainState *state) {
+  SwapchainResources *sc = &config->swapchain_pool[state->pool_gen];
+  state->sc_res = sc;
+  VKArena *arena = &sc->sc_res_arena;
+  if (!arena->arena) {
+    arena->init(arena_alloc({.name = "swapchain-res-arena"}));
+  }
+
+  vk_abort_if_error(config->dev.getSwapchainImagesKHR(state->swapchain, &sc->image_count, nullptr));
+  vk_abort_if_error(config->dev.getSwapchainImagesKHR(state->swapchain, &sc->image_count, sc->images));
   for (U32 i = 0; i < sc->image_count; ++i) {
     vk::ImageViewCreateInfo view_info{
         .image = sc->images[i],
         .viewType = vk::ImageViewType::e2D,
-        .format = chosen_format,
+        .format = config->image_format,
         .components = vk::ComponentMapping{
             .r = vk::ComponentSwizzle::eIdentity,
             .g = vk::ComponentSwizzle::eIdentity,
@@ -884,41 +820,42 @@ vk_create_swapchain_resources(vk::Device vk_device,
             .layerCount = 1,
         },
     };
-    sc->image_views[i] = vk_abort_if_error(vk_device.createImageView(view_info));
-    auto [msaa_img, msaa_alloc] = vk_create_image(vk_phys_dev,
-                                                  vk_device,
-                                                  swapchain_extent.width,
-                                                  swapchain_extent.height,
+    sc->image_views[i] = arena->ds.push(vk_abort_if_error(config->dev.createImageViewUnique(view_info)));
+    auto [msaa_img, msaa_alloc] = vk_create_image(config->phys_dev,
+                                                  config->dev,
+                                                  state->extent.width,
+                                                  state->extent.height,
                                                   1,
-                                                  chosen_format,
+                                                  config->image_format,
                                                   vk::ImageTiling::eOptimal,
                                                   vk::ImageUsageFlagBits::eColorAttachment,
-                                                  device_arena,
-                                                  msaa_samples);
+                                                  &config->sc_arena,
+                                                  arena,
+                                                  config->msaa_samples);
     sc->msaa_images[i] = msaa_img;
     sc->msaa_image_views[i] =
-        vk_create_image_view(vk_device, msaa_img, chosen_format, vk::ImageAspectFlagBits::eColor, 1);
+        vk_create_image_view(config->dev, msaa_img, config->image_format, vk::ImageAspectFlagBits::eColor, 1, arena);
   }
   vk::FenceCreateInfo fence_info{.flags = vk::FenceCreateFlagBits::eSignaled};
   for (U32 i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
-    (*in_flight_fences)[i] = vk_abort_if_error(vk_device.createFence(fence_info));
-    (*acquire_sems)[i] = vk_abort_if_error(vk_device.createSemaphore({}));
+    config->in_flight_fences[i] = arena->ds.push(vk_abort_if_error(config->dev.createFenceUnique(fence_info)));
+    config->acquire_sems[i] = arena->ds.push(vk_abort_if_error(config->dev.createSemaphoreUnique({})));
   }
   for (U32 i = 0; i < sc->image_count; ++i) {
-    sc->render_finished_sems[i] = vk_abort_if_error(vk_device.createSemaphore({}));
+    sc->render_finished_sems[i] = arena->ds.push(vk_abort_if_error(config->dev.createSemaphoreUnique({})));
   }
   vk::CommandPoolCreateInfo pool_info{
       .flags = vk::CommandPoolCreateFlagBits::eResetCommandBuffer,
-      .queueFamilyIndex = queue_indices.graphics_index,
+      .queueFamilyIndex = config->queue_indices.graphics_index,
   };
-  vk::CommandPool command_pool = vk_abort_if_error(vk_device.createCommandPool(pool_info));
+  vk::CommandPool command_pool = arena->ds.push(vk_abort_if_error(config->dev.createCommandPoolUnique(pool_info)));
   vk::CommandBufferAllocateInfo alloc_info{
       .commandPool = command_pool,
       .level = vk::CommandBufferLevel::ePrimary,
       .commandBufferCount = MAX_FRAMES_IN_FLIGHT,
   };
-  vk_abort_if_error(vk_device.allocateCommandBuffers(&alloc_info, *command_buffers));
-  return {sc, command_pool};
+  vk_abort_if_error(config->dev.allocateCommandBuffers(&alloc_info, state->command_buffers));
+  return command_pool;
 }
 
 internal VKTextureImage
@@ -926,9 +863,11 @@ vk_load_texture(vk::PhysicalDevice vk_phys_dev,
                 vk::Device vk_device,
                 VKGpuArena *host_arena,
                 VKGpuArena *device_arena,
+                VKArena *arena,
                 vk::CommandPool vk_command_pool,
                 vk::Queue graphics_queue,
-                char const *texture_path) {
+                char const *texture_path
+    ) {
   VKTextureImage tex{};
   U32 tex_width{}, tex_height{}, tex_channels{};
   stbi_uc *pixels = stbi_load(texture_path,
@@ -940,19 +879,23 @@ vk_load_texture(vk::PhysicalDevice vk_phys_dev,
   tex.mip_levels = static_cast<U32>(std::floor(std::log2(std::max(tex_width, tex_height)))) + 1;
   ASSERT_ALWAYS(pixels);
   auto [staging_buffer, staging_alloc] =
-      vk_create_buffer(vk_phys_dev, vk_device, image_size, vk::BufferUsageFlagBits::eTransferSrc, host_arena);
+      vk_create_buffer(vk_phys_dev, vk_device, image_size, vk::BufferUsageFlagBits::eTransferSrc, host_arena, arena);
   MemoryCopy(staging_alloc.mapped, pixels, image_size);
   stbi_image_free(pixels);
+
+  tex.format = vk::Format::eR8G8B8A8Srgb;
   std::tie(tex.image, tex.image_alloc) = vk_create_image(
       vk_phys_dev,
       vk_device,
       tex_width,
       tex_height,
       tex.mip_levels,
-      vk::Format::eR8G8B8A8Srgb,
+      tex.format,
       vk::ImageTiling::eOptimal,
-      vk::ImageUsageFlagBits::eTransferSrc | vk::ImageUsageFlagBits::eTransferDst | vk::ImageUsageFlagBits::eSampled,
-      device_arena);
+      vk::ImageUsageFlagBits::eTransferSrc | vk::ImageUsageFlagBits::eTransferDst |
+      vk::ImageUsageFlagBits::eSampled,
+      device_arena,
+      arena);
   vk_abort_if_error(vk_device.setDebugUtilsObjectNameEXT({
       .objectType = vk::ObjectType::eImage,
       .objectHandle = reinterpret_cast<uint64_t>(static_cast<VkImage>(tex.image)),
@@ -978,12 +921,13 @@ vk_load_texture(vk::PhysicalDevice vk_phys_dev,
                        tex_height,
                        tex.mip_levels);
   vk_end_single_time_command(vk_device, graphics_queue, vk_command_pool, command_buffer);
-  vk_device.destroyBuffer(staging_buffer);
   tex.image_view = vk_create_image_view(vk_device,
                                         tex.image,
                                         vk::Format::eR8G8B8A8Srgb,
                                         vk::ImageAspectFlagBits::eColor,
-                                        tex.mip_levels);
+                                        tex.mip_levels,
+                                        arena);
+
   return tex;
 }
 
@@ -992,64 +936,36 @@ internal void vk_destroy_texture(vk::Device device, VKTextureImage *tex) {
   device.destroyImage(tex->image);
 }
 
-internal VKBuiltShaderStages build_shader_stages(Arena *arena,
-                                                 vk::Device vk_device,
-                                                 DynArray<VKShaderStageDesc> *shader_stage_descriptions) {
-  VKBuiltShaderStages out{};
-  out.stages = DynArray<vk::PipelineShaderStageCreateInfo>::with_capacity(arena, shader_stage_descriptions->size);
-  // will create some extra, but its fine. this object is freed after pipeline creation anyways
-  out.modules = DynArray<VKLoadedShaderModule>::with_capacity(arena, shader_stage_descriptions->size);
+struct StageEntryPointComboInput {
+  String8 entry_point{};
+};
 
-  // compile modules
-  for (U64 i = 0; i < shader_stage_descriptions->size; i++) {
-    String8 file_name = (*shader_stage_descriptions)[i].file_name;
-    bool already_compiled = false;
-    for (U64 j = 0; j < out.modules.size; j++) {
-      if (out.modules[j].file_name == file_name) {
-        already_compiled = true;
-        break;
-      }
-    }
-    if (already_compiled)
-      continue;
+internal void load_shader_modules(vk::Device dev,
+                                  VKArena *arena,
+                                  String8 file_name,
+                                  ArraySlice<vk::PipelineShaderStageCreateInfo>
+                                  shader_stage_descriptions) {
+  TempScope scratch = scratch_begin_scoped(&arena->arena, 1);
+  SPIRVBlob spirv = read_spirv_blob(scratch, file_name);
+  vk::ShaderModule module = arena->ds.push(
+      vk_abort_if_error(dev.createShaderModuleUnique({.codeSize = spirv.byte_count, .pCode = spirv.words})));
 
-    auto *dst = &out.modules[out.modules.size++];
-    dst->file_name = file_name;
-
-    TempScope scratch = scratch_begin_scoped(&arena, 1);
-
-    SPIRVBlob spirv = read_spirv_blob(scratch, file_name);
-    dst->module = vk_abort_if_error(
-        vk_device.createShaderModule({.codeSize = spirv.byte_count, .pCode = spirv.words}));
+  for (U64 i = 0; i < shader_stage_descriptions.length; i++) {
+    shader_stage_descriptions[0].module = module;
   }
+}
 
-  for (U64 i = 0; i < shader_stage_descriptions->size; i++) {
-    VKShaderStageDesc stage = (*shader_stage_descriptions)[i];
-
-    auto *dst = &out.stages[out.stages.size++];
-
-    dst->stage = (*shader_stage_descriptions)[i].stage;
-    dst->sType = vk::StructureType::ePipelineShaderStageCreateInfo;
-    dst->pName = stage.entrypoint_name.c_str(arena);
-
-    bool found_module = false;
-    vk::ShaderModule *shader_module{};
-    for (U64 j = 0; j < out.modules.size; j++) {
-      if ((*shader_stage_descriptions)[i].file_name == out.modules[j].file_name) {
-        found_module = true;
-        shader_module = &out.modules[j].module;
-        break;
-      }
-    }
-    if (!found_module) {
-      ASSERT(!"Didnt find shader module");
-    }
-    dst->module = *shader_module;
-  }
-  return out;
+internal vk::ShaderModule load_shader_module(vk::Device dev,
+                                             VKArena *arena,
+                                             String8 file_name) {
+  TempScope scratch = scratch_begin_scoped(&arena->arena, 1);
+  SPIRVBlob spirv = read_spirv_blob(scratch, file_name);
+  return arena->ds.push(
+      vk_abort_if_error(dev.createShaderModuleUnique({.codeSize = spirv.byte_count, .pCode = spirv.words})));
 }
 
 internal vk::Pipeline create_gpl(vk::Device vk_device,
+                                 VKArena *arena,
                                  vk::PipelineCache cache,
                                  vk::GraphicsPipelineLibraryFlagsEXT subset,
                                  vk::GraphicsPipelineCreateInfo ci) {
@@ -1062,33 +978,40 @@ internal vk::Pipeline create_gpl(vk::Device vk_device,
   gpl_ci.pNext = ci.pNext;
   ci.pNext = &gpl_ci;
 
-  vk::Pipeline pipe = vk_abort_if_error(vk_device.createGraphicsPipeline(cache, ci));
+  vk::Pipeline pipe = arena->ds.push(vk_abort_if_error(vk_device.createGraphicsPipelineUnique(cache, ci)));
   return pipe;
 }
 
 internal vk::DescriptorSetLayout create_descriptor_set_layout(
     vk::Device device,
-    U32 binding_count,
-    vk::DescriptorSetLayoutBinding const *bindings) {
-  vk::DescriptorSetLayoutCreateInfo ci{.bindingCount = binding_count, .pBindings = bindings};
-  return vk_abort_if_error(device.createDescriptorSetLayout(ci));
+    VKArena *arena,
+    ArraySlice<vk::DescriptorSetLayoutBinding> bindings) {
+  vk::DescriptorSetLayoutCreateInfo ci{.bindingCount = static_cast<U32>(bindings.length), .pBindings = bindings};
+  return arena->ds.push(vk_abort_if_error(device.createDescriptorSetLayoutUnique(ci)));
 }
 
 internal vk::PipelineLayout create_pipeline_layout(
     vk::Device device,
-    vk::DescriptorSetLayout set_layout) {
-  vk::PipelineLayoutCreateInfo ci{.setLayoutCount = 1, .pSetLayouts = &set_layout};
-  return vk_abort_if_error(device.createPipelineLayout(ci));
+    VKArena *arena,
+    ArraySlice<vk::DescriptorSetLayout> descriptor_set_layouts,
+    ArraySlice<vk::PushConstantRange> push_constant_ranges
+    ) {
+  vk::PipelineLayoutCreateInfo ci{.setLayoutCount = static_cast<U32>(descriptor_set_layouts.length),
+                                  .pSetLayouts = descriptor_set_layouts,
+                                  .pushConstantRangeCount = static_cast<U32>(push_constant_ranges.length),
+                                  .pPushConstantRanges = push_constant_ranges};
+  return arena->ds.push(vk_abort_if_error(device.createPipelineLayoutUnique(ci)));
 }
 
 internal vk::Pipeline create_vertex_input_library(
     vk::Device device,
+    VKArena *arena,
     VertexInputLibDesc const &desc) {
   vk::PipelineVertexInputStateCreateInfo vertex_input{
-      .vertexBindingDescriptionCount = static_cast<U32>(desc.bindings.size),
-      .pVertexBindingDescriptions = desc.bindings,
-      .vertexAttributeDescriptionCount = static_cast<U32>(desc.attributes.size),
-      .pVertexAttributeDescriptions = desc.attributes,
+      .vertexBindingDescriptionCount = static_cast<U32>(desc.bindings.length),
+      .pVertexBindingDescriptions = desc.bindings.data,
+      .vertexAttributeDescriptionCount = static_cast<U32>(desc.attributes.length),
+      .pVertexAttributeDescriptions = desc.attributes.data,
   };
   vk::PipelineInputAssemblyStateCreateInfo input_assembly{
       .topology = desc.topology,
@@ -1099,6 +1022,7 @@ internal vk::Pipeline create_vertex_input_library(
       .pInputAssemblyState = &input_assembly,
   };
   return create_gpl(device,
+                    arena,
                     nullptr,
                     vk::GraphicsPipelineLibraryFlagBitsEXT::eVertexInputInterface,
                     ci);
@@ -1106,10 +1030,9 @@ internal vk::Pipeline create_vertex_input_library(
 
 internal vk::Pipeline create_pre_raster_library(
     vk::Device device,
+    VKArena *arena,
     vk::PipelineLayout layout,
-    PreRasterLibDesc const &desc,
-    vk::PipelineShaderStageCreateInfo const *stages,
-    U32 stage_count) {
+    PreRasterLibDesc const &desc) {
   vk::PipelineViewportStateCreateInfo viewport_state{
       .viewportCount = desc.viewport_count,
       .scissorCount = desc.scissor_count,
@@ -1132,8 +1055,8 @@ internal vk::Pipeline create_pre_raster_library(
   };
 
   vk::GraphicsPipelineCreateInfo ci{
-      .stageCount = stage_count,
-      .pStages = stages,
+      .stageCount = static_cast<U32>(desc.shader_stages.length),
+      .pStages = desc.shader_stages,
       .pViewportState = &viewport_state,
       .pRasterizationState = &rasterizer,
       .pDynamicState = &dynamic_state,
@@ -1147,6 +1070,7 @@ internal vk::Pipeline create_pre_raster_library(
   }
 
   return create_gpl(device,
+                    arena,
                     nullptr,
                     vk::GraphicsPipelineLibraryFlagBitsEXT::ePreRasterizationShaders,
                     ci);
@@ -1154,10 +1078,9 @@ internal vk::Pipeline create_pre_raster_library(
 
 internal vk::Pipeline create_fragment_library(
     vk::Device device,
+    VKArena *arena,
     vk::PipelineLayout layout,
-    FragmentLibDesc const &desc,
-    vk::PipelineShaderStageCreateInfo const *stages,
-    U32 stage_count) {
+    FragmentLibDesc const &desc) {
   vk::PipelineDepthStencilStateCreateInfo depth_stencil{
       .depthTestEnable = desc.depth_test,
       .depthWriteEnable = desc.depth_write,
@@ -1175,13 +1098,14 @@ internal vk::Pipeline create_fragment_library(
   }
 
   vk::GraphicsPipelineCreateInfo ci{
-      .stageCount = stage_count,
-      .pStages = stages,
+      .stageCount = 1,
+      .pStages = desc.fragment_shader,
       .pMultisampleState = desc.sample_shading_enable ? &multisampling : nullptr,
       .pDepthStencilState = &depth_stencil,
       .layout = layout,
   };
   return create_gpl(device,
+                    arena,
                     nullptr,
                     vk::GraphicsPipelineLibraryFlagBitsEXT::eFragmentShader,
                     ci);
@@ -1189,6 +1113,7 @@ internal vk::Pipeline create_fragment_library(
 
 internal vk::Pipeline create_fragment_output_library(
     vk::Device device,
+    VKArena *arena,
     FragmentOutputLibDesc const &desc) {
   vk::PipelineColorBlendAttachmentState color_blend_attachment{
       .blendEnable = desc.blend_enable,
@@ -1217,6 +1142,7 @@ internal vk::Pipeline create_fragment_output_library(
       .pColorBlendState = &color_blending,
   };
   return create_gpl(device,
+                    arena,
                     nullptr,
                     vk::GraphicsPipelineLibraryFlagBitsEXT::eFragmentOutputInterface,
                     ci);
@@ -1224,9 +1150,9 @@ internal vk::Pipeline create_fragment_output_library(
 
 internal vk::Pipeline create_linked_pipeline(
     vk::Device device,
+    VKArena *arena,
     vk::PipelineLayout layout,
-    U32 library_count,
-    vk::Pipeline const *libraries,
+    ArraySlice<vk::Pipeline> libraries,
     vk::Format color_format,
     vk::Format depth_format) {
   vk::PipelineRenderingCreateInfo prci{
@@ -1235,7 +1161,7 @@ internal vk::Pipeline create_linked_pipeline(
       .depthAttachmentFormat = depth_format,
   };
   vk::PipelineLibraryCreateInfoKHR link_info{
-      .libraryCount = library_count,
+      .libraryCount = static_cast<U32>(libraries.length),
       .pLibraries = libraries,
   };
   prci.pNext = &link_info;
@@ -1243,20 +1169,21 @@ internal vk::Pipeline create_linked_pipeline(
       .pNext = &prci,
       .layout = layout,
   };
-  return vk_abort_if_error(device.createGraphicsPipeline(nullptr, ci));
+  return arena->ds.push(vk_abort_if_error(device.createGraphicsPipelineUnique(nullptr, ci)));
 }
 
 TransientBuffer vk_create_transient_buffer(vk::PhysicalDevice phys_dev,
                                            vk::Device device,
-                                           VKGpuArena *arena,
+                                           VKGpuArena *gpu_arena,
+                                           VKArena *arena,
                                            U64 size_per_frame,
                                            vk::BufferUsageFlags usage) {
   TransientBuffer tb{};
-  tb.arena = arena;
+  tb.arena = gpu_arena;
   tb.size_per_frame = size_per_frame;
 
   for (U32 i = 0; i < MAX_FRAMES_IN_FLIGHT; ++i) {
-    auto [buffer, alloc] = vk_create_buffer(phys_dev, device, size_per_frame, usage, arena);
+    auto [buffer, alloc] = vk_create_buffer(phys_dev, device, size_per_frame, usage, gpu_arena, arena);
     tb.frames[i].buffer = buffer;
     tb.frames[i].mapped = alloc.mapped;
     tb.frames[i].used = 0;
@@ -1268,4 +1195,56 @@ void vk_destroy_transient_buffer(vk::Device device, TransientBuffer *tb) {
   for (U32 i = 0; i < MAX_FRAMES_IN_FLIGHT; ++i) {
     device.destroyBuffer(tb->frames[i].buffer);
   }
+}
+
+void vk_present(VKSwapchainConfig *config, VKSwapchainState *state, vk::Queue present_queue, VKArena *arena) {
+  VkPresentInfoKHR present_info{
+      .sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR,
+      .waitSemaphoreCount = 1,
+      .pWaitSemaphores = reinterpret_cast<VkSemaphore *>(&state->sc_res->render_finished_sems[state->image_index]),
+      .swapchainCount = 1,
+      .pSwapchains = reinterpret_cast<VkSwapchainKHR *>(&state->swapchain),
+      .pImageIndices = &state->image_index
+  };
+
+  VkResult vk_present_res = vkQueuePresentKHR(present_queue, &present_info);
+
+  if (vk_present_res == VK_ERROR_OUT_OF_DATE_KHR || vk_present_res == VK_SUBOPTIMAL_KHR || config->window->
+      framebuffer_resized || state->needs_rebuild) {
+    state->pool_gen = (state->pool_gen + 1) % SC_MAX_GENERATIONS;
+    state->sc_res = &config->swapchain_pool[state->pool_gen];
+
+    vk_recreate_swapchain(config, state);
+
+    imgui_set_min_image_count(state->sc_res->image_count);
+    config->window->framebuffer_resized = false;
+  } else if (vk_present_res != VK_SUCCESS) {
+    std::fprintf(stderr, "vkQueuePresentKHR failed: %d\n", vk_present_res);
+    TRAP();
+  }
+}
+
+bool vk_recreate_swapchain_if_needed(VkResult acquire_res,
+                                     VKSwapchainConfig *config,
+                                     VKSwapchainState *state,
+                                     VKArena *arena) {
+  if (acquire_res == VK_ERROR_OUT_OF_DATE_KHR) {
+    state->pool_gen = (state->pool_gen + 1) % SC_MAX_GENERATIONS;
+    state->sc_res = &config->swapchain_pool[state->pool_gen];
+
+    vk_recreate_swapchain(config,
+                          state);
+
+    imgui_set_min_image_count(state->sc_res->image_count);
+    return true;
+  }
+  if (acquire_res == VK_SUBOPTIMAL_KHR) {
+    state->needs_rebuild;
+    return false;
+  } else if (acquire_res != VK_SUCCESS) {
+    std::fprintf(stderr, "vkAcquireNextImageKHR failed: %d\n", acquire_res);
+    ASSERT(!"Debug fail");
+    return true;
+  }
+  return false;
 }

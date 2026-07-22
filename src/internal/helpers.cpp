@@ -2,6 +2,8 @@
 #include <fstream>
 #include "../sd2_inc.hpp"
 
+extern DebugCtx g_debug_ctx;
+
 void glfw_error_callback(int ec, char const *desc) {
   printf("%d: %s\n", ec, desc);
 }
@@ -92,6 +94,50 @@ void write_file(String8 filename, void *mem, U64 offset, U64 length) {
   }
 }
 
+FORCE_INLINE void FrameClock::submit_sim_sample(U32 fixed_steps,
+                                                F32 frame_dt,
+                                                F32 fixed_dt,
+                                                F32 accumulator,
+                                                F32 sim_work_ms,
+                                                bool hit_max_steps) {
+  F32 new_frame_dt_ms = frame_dt * 1000.0f;
+  F32 new_fixed_dt_ms = fixed_dt * 1000.0f;
+  F32 new_fixed_hz_target = fixed_dt > 0.0f ? (1.0f / fixed_dt) : 0.0f;
+  F32 new_fixed_hz_actual = frame_dt > 0.0f ? (static_cast<F32>(fixed_steps) / frame_dt) : 0.0f;
+  F32 new_sim_ms = static_cast<F32>(fixed_steps) * new_fixed_dt_ms;
+  F32 new_steps_per_frame = static_cast<F32>(fixed_steps);
+  F32 new_accumulator_ms = accumulator * 1000.0f;
+  F32 new_accumulator_alpha = fixed_dt > 0.0f ? (accumulator / fixed_dt) : 0.0f;
+  F32 new_dropped_ms = (hit_max_steps && accumulator >= fixed_dt) ? (accumulator * 1000.0f) : 0.0f;
+
+  report.fixed_dt_ms = new_fixed_dt_ms;
+  report.fixed_hz_target = new_fixed_hz_target;
+  report.hit_max_steps = hit_max_steps;
+
+  static bool first_sim_report = true;
+  if (first_sim_report) {
+    report.frame_dt_ms = new_frame_dt_ms;
+    report.fixed_hz_actual = new_fixed_hz_actual;
+    report.sim_ms = new_sim_ms;
+    report.sim_work_ms = sim_work_ms;
+    report.steps_per_frame = new_steps_per_frame;
+    report.accumulator_ms = new_accumulator_ms;
+    report.accumulator_alpha = new_accumulator_alpha;
+    report.dropped_ms = new_dropped_ms;
+    first_sim_report = false;
+    return;
+  }
+
+  report.frame_dt_ms = ema_update(report.frame_dt_ms, new_frame_dt_ms, alpha);
+  report.fixed_hz_actual = ema_update(report.fixed_hz_actual, new_fixed_hz_actual, alpha);
+  report.sim_ms = ema_update(report.sim_ms, new_sim_ms, alpha);
+  report.sim_work_ms = ema_update(report.sim_work_ms, sim_work_ms, alpha);
+  report.steps_per_frame = ema_update(report.steps_per_frame, new_steps_per_frame, alpha);
+  report.accumulator_ms = ema_update(report.accumulator_ms, new_accumulator_ms, alpha);
+  report.accumulator_alpha = ema_update(report.accumulator_alpha, new_accumulator_alpha, alpha);
+  report.dropped_ms = ema_update(report.dropped_ms, new_dropped_ms, alpha);
+}
+
 void FrameClock::wait_for_target() {
   do {
     clock_gettime(CLOCK_MONOTONIC, &frame_end);
@@ -103,13 +149,13 @@ void FrameClock::wait_for_target() {
   write_report();
 }
 
-void FrameClock::write_report() {
+FORCE_INLINE void FrameClock::write_report() {
   F32 new_target = static_cast<F32>(target_ms);
   F32 new_total = static_cast<F32>(total_ms());
   F32 new_wait = static_cast<F32>(wait_ms());
   F32 new_work = static_cast<F32>(work_ms());
-  F32 new_fps = static_cast<F32>(1000.0f / total_ms());
-  F32 new_tfps = static_cast<F32>(1000.0f / target_ms);
+  F32 new_fps = new_total > 0.0f ? (1000.0f / new_total) : 0.0f;
+  F32 new_tfps = new_target > 0.0f ? (1000.0f / new_target) : 0.0f;
 
   report.target_ms = new_target;
   report.target_fps = new_tfps;
@@ -121,14 +167,16 @@ void FrameClock::write_report() {
     report.wait_ms = new_wait;
     report.work_ms = new_work;
     report.fps = new_fps;
+    report.sim_utilization = report.total_ms > 0.0f ? (report.sim_work_ms / report.total_ms) : 0.0f;
     first_report = false;
     return;
   }
-  // Blend the history with the new data scaled by recency
+
   report.total_ms = ema_update(report.total_ms, new_total, alpha);
   report.wait_ms = ema_update(report.wait_ms, new_wait, alpha);
   report.work_ms = ema_update(report.work_ms, new_work, alpha);
   report.fps = ema_update(report.fps, new_fps, alpha);
+  report.sim_utilization = report.total_ms > 0.0f ? (report.sim_work_ms / report.total_ms) : 0.0f;
 }
 
 internal U32 glfw_get_required_extensions(char const **out_extensions, U32 max_extensions) {
@@ -146,45 +194,6 @@ internal U32 glfw_get_required_extensions(char const **out_extensions, U32 max_e
   return count;
 }
 
-internal void handle_key_input(Key *input) {
-  auto current = &input->current;
-  auto previous = &input->previous;
-  auto pressed = &input->pressed;
-  auto released = &input->released;
-  auto held = &input->held;
-  for (U64 i = 0; i < current->size() >> 6; ++i) {
-    U64 cur = current->bits[i];
-    U64 prev = previous->bits[i];
-
-    pressed->bits[i] = cur & ~prev;
-    held->bits[i] = cur & prev;
-    released->bits[i] = ~cur & prev;
-    previous->bits[i] = cur;
-  }
-}
-
-internal void handle_mouse_input(Mouse *mouse) {
-  auto *current = &mouse->current;
-  auto *previous = &mouse->previous;
-  auto *pressed = &mouse->pressed;
-  auto *released = &mouse->released;
-  auto *held = &mouse->held;
-
-  uint64_t m_cur = current->bits[0];
-  uint64_t m_prev = previous->bits[0];
-
-  pressed->bits[0] = m_cur & ~m_prev;
-  held->bits[0] = m_cur & m_prev;
-  released->bits[0] = ~m_cur & m_prev;
-
-  previous->bits[0] = m_cur;
-
-  mouse->delta_pos = mouse->current_pos - mouse->previous_pos;
-  mouse->previous_pos = mouse->current_pos;
-
-  mouse->delta_scroll = mouse->current_scroll;
-  mouse->current_scroll = {.x = 0.0, .y = 0.0};
-}
 
 void Camera::transform(Vec3<F32> rotation, Vec3<F32> translation) {
   // TODO: z translate
@@ -223,6 +232,62 @@ Camera Camera::from_pos(glm::vec3 pos) {
   res.yaw = glm::atan(res.camera_front.y, res.camera_front.x);
 
   return res;
+}
+
+void toggle_cursor() {
+  switch (glfwGetInputMode(g_dbg_ctx.window->glfw_window, GLFW_CURSOR)) {
+    case GLFW_CURSOR_DISABLED: {
+      glfwSetInputMode(g_dbg_ctx.window->glfw_window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
+      break;
+    }
+    case GLFW_CURSOR_NORMAL: {
+      glfwSetInputMode(g_dbg_ctx.window->glfw_window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
+      break;
+    }
+  }
+}
+
+void show_cursor() {
+  glfwSetInputMode(g_dbg_ctx.window->glfw_window, GLFW_CURSOR, GLFW_CURSOR_NORMAL);
+}
+
+void hide_cursor() {
+  glfwSetInputMode(g_dbg_ctx.window->glfw_window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
+}
+
+void toggle_fullscreen() {
+  auto *w = g_dbg_ctx.window;
+  GLFWwindow *glfw_window = g_dbg_ctx.window->glfw_window;
+  if (!w->fullscreen) {
+    glfwGetWindowPos(glfw_window, &w->windowed_x, &w->windowed_y);
+    glfwGetWindowSize(glfw_window, &w->windowed_w, &w->windowed_h);
+    int cx = w->windowed_x + w->windowed_w / 2;
+    int cy = w->windowed_y + w->windowed_h / 2;
+    int count;
+    GLFWmonitor **monitors = glfwGetMonitors(&count);
+    GLFWmonitor *monitor = glfwGetPrimaryMonitor();
+    for (int i = 0; i < count; i++) {
+      int mx, my;
+      glfwGetMonitorPos(monitors[i], &mx, &my);
+      GLFWvidmode const *mode = glfwGetVideoMode(monitors[i]);
+      if (cx >= mx && cx < mx + static_cast<int>(mode->width) &&
+          cy >= my && cy < my + static_cast<int>(mode->height)) {
+        monitor = monitors[i];
+        break;
+      }
+    }
+    int mx, my;
+    glfwGetMonitorPos(monitor, &mx, &my);
+    GLFWvidmode const *mode = glfwGetVideoMode(monitor);
+    glfwSetWindowAttrib(glfw_window, GLFW_DECORATED, GLFW_FALSE);
+    glfwSetWindowPos(glfw_window, mx, my);
+    glfwSetWindowSize(glfw_window, mode->width, mode->height);
+  } else {
+    glfwSetWindowAttrib(glfw_window, GLFW_DECORATED, GLFW_TRUE);
+    glfwSetWindowPos(glfw_window, w->windowed_x, w->windowed_y);
+    glfwSetWindowSize(glfw_window, w->windowed_w, w->windowed_h);
+  }
+  w->fullscreen = !w->fullscreen;
 }
 
 internal std::tuple<DynArray<TextureVertex>, DynArray<U32>> load_obj(Arena *arena, const char *obj_path) {
@@ -272,4 +337,29 @@ internal std::tuple<DynArray<TextureVertex>, DynArray<U32>> load_obj(Arena *aren
 
 constexpr glm::vec3 Camera::world_up() {
   return {0.0f, 0.0f, 1.0f};
+}
+
+internal void find_target_ms(F64 *target_frame_ms, GLFWwindow *glfw_window, FrameClock *clock) {
+  int wx, wy, ww, wh;
+  glfwGetWindowPos(glfw_window, &wx, &wy);
+  glfwGetWindowSize(glfw_window, &ww, &wh);
+  int win_cx = wx + ww / 2;
+  int win_cy = wy + wh / 2;
+
+  U32 monitor_hz = 60;
+  int count;
+  GLFWmonitor **monitors = glfwGetMonitors(&count);
+  for (int i = 0; i < count; i++) {
+    int mx, my;
+    glfwGetMonitorPos(monitors[i], &mx, &my);
+    GLFWvidmode const *mode = glfwGetVideoMode(monitors[i]);
+    if (win_cx >= mx && win_cx < mx + static_cast<int>(mode->width) && win_cy >= my &&
+        win_cy < my + static_cast<int>(mode->height)) {
+      monitor_hz = mode->refreshRate > 0 ? mode->refreshRate : 60;
+      break;
+    }
+  }
+  *target_frame_ms = 1000.0 / monitor_hz;
+  clock->target_ms = *target_frame_ms;
+  printf("Monitor: %u Hz (target: %.3f ms/frame)\n", monitor_hz, *target_frame_ms);
 }

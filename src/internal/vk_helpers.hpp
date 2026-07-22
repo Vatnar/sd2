@@ -2,6 +2,10 @@
 
 #include "base.hpp"
 #include "base_array.hpp"
+#include "vk_arena.hpp"
+#include "vk_destructor_stack.hpp"
+
+constexpr U32 MAX_FRAMES_IN_FLIGHT = 2;
 
 struct VKInstanceResult {
   vk::Instance instance;
@@ -32,13 +36,66 @@ struct VKGpuArenaAlloc {
 struct VKTextureImage {
   U32 mip_levels{};
   vk::Image image{};
+  vk::Format format;
   vk::ImageView image_view{};
   VKGpuArenaAlloc image_alloc{};
 };
 
-struct VKDepthResources {
-  VKTextureImage tex;
-  vk::Format format;
+struct VKQueueFamilyIndices {
+  U32 graphics_index{0xFFFFFFFF};
+  U32 present_index{0xFFFFFFFF};
+
+  [[nodiscard]] bool is_complete() const { return graphics_index != 0xFFFFFFFF && present_index != 0xFFFFFFFF; }
+};
+
+constexpr U32 SC_MAX_GENERATIONS = 10;
+constexpr U32 SC_MAX_IMAGES = 8;
+
+struct SwapchainResources {
+  vk::Image images[SC_MAX_IMAGES];
+  vk::ImageView image_views[SC_MAX_IMAGES];
+  vk::Image msaa_images[SC_MAX_IMAGES];
+  vk::ImageView msaa_image_views[SC_MAX_IMAGES];
+  bool image_initialized[SC_MAX_IMAGES];
+  vk::Fence images_in_flight[SC_MAX_IMAGES];
+  vk::Semaphore render_finished_sems[SC_MAX_IMAGES];
+  U32 image_count{};
+
+  VKArena sc_res_arena{};
+};
+
+struct VKSwapchainConfig {
+  vk::Device dev{};
+  vk::PhysicalDevice phys_dev{};
+  vk::SurfaceKHR surface{};
+
+  AppWindow *window{};
+  VKQueueFamilyIndices queue_indices{};
+
+  vk::Format image_format{};
+  vk::ColorSpaceKHR color_space{};
+  vk::PresentModeKHR present_mode{};
+
+  vk::SampleCountFlagBits msaa_samples{};
+
+  Array<SwapchainResources, SC_MAX_GENERATIONS> swapchain_pool{};
+  Array<vk::Fence, MAX_FRAMES_IN_FLIGHT> in_flight_fences{};
+  Array<vk::Semaphore, MAX_FRAMES_IN_FLIGHT> acquire_sems{};
+
+  VKGpuArena *device_arena{};
+  VKGpuArena sc_arena{};
+};
+
+struct VKSwapchainState {
+  vk::Extent2D extent{};
+  VKTextureImage depth{};
+  vk::SwapchainKHR swapchain{};
+
+  U32 image_index{};
+  SwapchainResources *sc_res{};
+  U32 pool_gen{};
+  bool needs_rebuild{};
+  Array<vk::CommandBuffer, MAX_FRAMES_IN_FLIGHT> command_buffers{};
 };
 
 internal void vk_destroy_texture(vk::Device device, VKTextureImage *tex);
@@ -57,17 +114,11 @@ template<typename T> concept VKResultValue = requires { typename vk::ResultValue
 
 template<typename T>
   requires VKResultValue<T>
-internal T vk_abort_if_error(vk::ResultValue<T> const &ret, std::string_view message = {}) {
+internal T vk_abort_if_error(vk::ResultValue<T> ret, std::string_view message = {}) {
   vk_abort_if_error(ret.result, message);
-  return ret.value;
+  return std::move(ret.value);
 }
 
-struct VKQueueFamilyIndices {
-  U32 graphics_index{0xFFFFFFFF};
-  U32 present_index{0xFFFFFFFF};
-
-  [[nodiscard]] bool is_complete() const { return graphics_index != 0xFFFFFFFF && present_index != 0xFFFFFFFF; }
-};
 
 internal VKQueueFamilyIndices vk_find_queue_families(vk::PhysicalDevice device, vk::SurfaceKHR surface);
 
@@ -86,23 +137,11 @@ internal VKSwapchainSupport vk_query_swapchain_support(vk::PhysicalDevice device
 struct VKRatedDevice {
   vk::PhysicalDevice device;
   U32 score;
+  VKQueueFamilyIndices queue_family_indices{};
 };
 
 internal VKRatedDevice vk_pick_best_physical_device(vk::Instance instance, vk::SurfaceKHR surface);
 
-constexpr U32 SC_MAX_GENERATIONS = 10;
-constexpr U32 SC_MAX_IMAGES = 8;
-
-struct SwapchainResources {
-  vk::Image images[SC_MAX_IMAGES];
-  vk::ImageView image_views[SC_MAX_IMAGES];
-  vk::Image msaa_images[SC_MAX_IMAGES];
-  vk::ImageView msaa_image_views[SC_MAX_IMAGES];
-  bool image_initialized[SC_MAX_IMAGES];
-  vk::Fence images_in_flight[SC_MAX_IMAGES];
-  vk::Semaphore render_finished_sems[SC_MAX_IMAGES];
-  U32 image_count{};
-};
 
 internal bool vk_check_validation_layer_support();
 
@@ -129,24 +168,22 @@ internal VKGpuArena vk_create_gpu_arena(vk::PhysicalDevice phys_dev,
 internal void vk_destroy_gpu_arena(vk::Device device, VKGpuArena *arena);
 
 
-internal VKDepthResources vk_create_depth_resources(vk::PhysicalDevice vk_phys_dev,
-                                                    vk::Device vk_device,
-                                                    VKGpuArena *device_arena,
-                                                    vk::Extent2D extent,
-                                                    vk::SampleCountFlagBits msaa_samples
-    );
+internal void vk_create_depth_resources(VKSwapchainConfig *config,
+                                        VKSwapchainState *state,
+                                        VKArena *arena);
 
 internal std::pair<vk::Buffer, VKGpuArenaAlloc>
 vk_create_buffer(vk::PhysicalDevice, vk::Device, vk::DeviceSize size, vk::BufferUsageFlags usage, VKGpuArena *arena);
-internal std::pair<vk::Image, VKGpuArenaAlloc> vk_create_image(vk::PhysicalDevice,
-                                                               vk::Device,
+internal std::pair<vk::Image, VKGpuArenaAlloc> vk_create_image(vk::PhysicalDevice vk_phys_dev,
+                                                               vk::Device vk_device,
                                                                U32 width,
                                                                U32 height,
                                                                U32 mip_levels,
                                                                vk::Format format,
                                                                vk::ImageTiling tiling,
                                                                vk::ImageUsageFlags usage,
-                                                               VKGpuArena *arena,
+                                                               VKGpuArena *gpu_arena,
+                                                               VKArena *arena,
                                                                vk::SampleCountFlagBits num_samples =
                                                                    vk::SampleCountFlagBits::e1);
 
@@ -175,11 +212,13 @@ internal void vk_transition_image_layout(vk::CommandBuffer command_buffer,
 
 internal void
 vk_copy_buffer_to_image(vk::CommandBuffer command_buffer, vk::Buffer buffer, vk::Image image, U32 width, U32 height);
+
 internal vk::ImageView vk_create_image_view(vk::Device device,
                                             vk::Image image,
                                             vk::Format format,
                                             vk::ImageAspectFlags aspect_mask,
-                                            U32 mip_levels);
+                                            U32 mip_levels,
+                                            VKArena *arena);
 
 using PhysicalDeviceFeatures = vk::StructureChain<vk::PhysicalDeviceFeatures2,
                                                   vk::PhysicalDeviceVulkan11Features,
@@ -195,20 +234,7 @@ internal vk::Format find_supported_format(vk::Format *candidates,
                                           vk::FormatFeatureFlags features,
                                           vk::PhysicalDevice phys_dev);
 
-internal void vk_recreate_swapchain(GLFWwindow *glfw_window,
-                                    vk::Device vk_device,
-                                    SwapchainResources *sc,
-                                    vk::SwapchainKHR &vk_swapchain,
-                                    vk::PhysicalDevice vk_phys_dev,
-                                    vk::SurfaceKHR vk_surface,
-                                    vk::Extent2D &swapchain_extent,
-                                    vk::Format swapchain_image_format,
-                                    vk::ColorSpaceKHR swapchain_color_space,
-                                    vk::PresentModeKHR present_mode,
-                                    vk::Image *depth_image,
-                                    vk::ImageView *depth_image_view,
-                                    vk::SampleCountFlagBits msaa_samples,
-                                    VKGpuArena *device_arena);
+
 internal void vk_generate_mip_maps(vk::PhysicalDevice phys_dev,
                                    vk::CommandBuffer command_buffer,
                                    vk::Image image,
@@ -218,36 +244,23 @@ internal void vk_generate_mip_maps(vk::PhysicalDevice phys_dev,
                                    U32 mip_levels);
 internal vk::SampleCountFlagBits vk_get_max_usable_sample_count(vk::PhysicalDevice device);
 
-constexpr U32 MAX_FRAMES_IN_FLIGHT = 2;
 
 internal std::tuple<vk::Device, vk::Queue, vk::Queue>
 vk_create_logical_device(vk::PhysicalDevice phys_dev, VKQueueFamilyIndices queue_indices);
 
-internal std::tuple<vk::Format, vk::ColorSpaceKHR, vk::PresentModeKHR, vk::Extent2D>
-vk_create_swapchain_config(vk::PhysicalDevice dev, vk::SurfaceKHR surface, U32 width, U32 height, Arena *arena);
+internal VKSwapchainConfig
+vk_create_swapchain_config(vk::Device device,
+                           vk::PhysicalDevice phys_dev,
+                           vk::SurfaceKHR surface,
+                           VKQueueFamilyIndices queue_indices,
+                           VKGpuArena *device_arena,
+                           Arena *arena);
 
-internal vk::SwapchainKHR vk_create_swapchain(vk::PhysicalDevice vk_phys_dev,
-                                              vk::Device vk_device,
-                                              vk::SurfaceKHR vk_surface,
-                                              vk::Format chosen_format,
-                                              vk::ColorSpaceKHR chosen_color_space,
-                                              vk::Extent2D swapchain_extent,
-                                              vk::PresentModeKHR chosen_present_mode,
-                                              VKQueueFamilyIndices queue_indices);
+internal void vk_create_swapchain(VKSwapchainConfig *config, VKSwapchainState *state, vk::SwapchainKHR old_swapchain);
 
-internal std::tuple<SwapchainResources *, vk::CommandPool>
-vk_create_swapchain_resources(vk::Device vk_device,
-                              vk::PhysicalDevice vk_phys_dev,
-                              vk::SwapchainKHR swapchain,
-                              vk::Extent2D swapchain_extent,
-                              vk::Format chosen_format,
-                              vk::SampleCountFlagBits msaa_samples,
-                              VKQueueFamilyIndices queue_indices,
-                              VKGpuArena *device_arena,
-                              Array<SwapchainResources, SC_MAX_GENERATIONS> *swapchain_pool,
-                              Array<vk::Fence, MAX_FRAMES_IN_FLIGHT> *in_flight_fences,
-                              Array<vk::Semaphore, MAX_FRAMES_IN_FLIGHT> *acquire_sems,
-                              Array<vk::CommandBuffer, MAX_FRAMES_IN_FLIGHT> *command_buffers);
+internal vk::CommandPool
+vk_create_swapchain_resources(VKSwapchainConfig *config,
+                              VKSwapchainState *state);
 
 internal VKTextureImage
 vk_load_texture(vk::PhysicalDevice vk_phys_dev,
@@ -258,36 +271,16 @@ vk_load_texture(vk::PhysicalDevice vk_phys_dev,
                 vk::Queue graphics_queue,
                 char const *texture_path);
 
-struct VKShaderStageDesc {
-  vk::ShaderStageFlagBits stage{};
-  String8 entrypoint_name{};
-  String8 file_name{};
-};
-
-struct VKLoadedShaderModule {
-  String8 file_name;
-  vk::ShaderModule module;
-};
-
-struct VKBuiltShaderStages {
-  DynArray<vk::PipelineShaderStageCreateInfo> stages;
-  DynArray<VKLoadedShaderModule> modules;
-};
-
-internal VKBuiltShaderStages build_shader_stages(Arena *arena,
-                                                 vk::Device vk_device,
-                                                 DynArray<VKShaderStageDesc> *shader_stage_descriptions);
-
 // GPL subset descriptors
 struct VertexInputLibDesc {
-  DynArray<vk::VertexInputBindingDescription> bindings{};
-  DynArray<vk::VertexInputAttributeDescription> attributes{};
+  ArraySlice<vk::VertexInputBindingDescription> bindings{};
+  ArraySlice<vk::VertexInputAttributeDescription> attributes{};
   vk::PrimitiveTopology topology{vk::PrimitiveTopology::eTriangleList};
   bool primitive_restart{false};
 };
 
 struct PreRasterLibDesc {
-  DynArray<VKShaderStageDesc> shader_stages{};
+  ArraySlice<vk::PipelineShaderStageCreateInfo> shader_stages{};
   bool tessellation{false};
   U32 tess_patch_control_points{0};
   U32 viewport_count{1};
@@ -304,7 +297,7 @@ struct PreRasterLibDesc {
 };
 
 struct FragmentLibDesc {
-  VKShaderStageDesc fragment_shader{};
+  vk::PipelineShaderStageCreateInfo *fragment_shader{};
   bool depth_test{true};
   bool depth_write{true};
   vk::CompareOp depth_compare{vk::CompareOp::eLess};
@@ -323,6 +316,7 @@ struct FragmentOutputLibDesc {
 };
 
 internal vk::Pipeline create_gpl(vk::Device vk_device,
+                                 VKArena *arena,
                                  vk::PipelineCache cache,
                                  vk::GraphicsPipelineLibraryFlagsEXT subset,
                                  vk::GraphicsPipelineCreateInfo ci);
@@ -342,17 +336,15 @@ internal vk::Pipeline create_vertex_input_library(
 
 internal vk::Pipeline create_pre_raster_library(
     vk::Device device,
+    VKArena *arena,
     vk::PipelineLayout layout,
-    PreRasterLibDesc const &desc,
-    vk::PipelineShaderStageCreateInfo const *stages,
-    U32 stage_count);
+    PreRasterLibDesc const &desc);
 
 internal vk::Pipeline create_fragment_library(
     vk::Device device,
     vk::PipelineLayout layout,
-    FragmentLibDesc const &desc,
-    vk::PipelineShaderStageCreateInfo const *stages,
-    U32 stage_count);
+    FragmentLibDesc const &desc
+    );
 
 internal vk::Pipeline create_fragment_output_library(
     vk::Device device,
@@ -365,6 +357,7 @@ internal vk::Pipeline create_linked_pipeline(
     vk::Pipeline const *libraries,
     vk::Format color_format,
     vk::Format depth_format);
+
 
 //~ Transient buffers
 struct TransientAlloc {
@@ -405,7 +398,17 @@ struct TransientBuffer {
 
 internal TransientBuffer vk_create_transient_buffer(vk::PhysicalDevice phys_dev,
                                                     vk::Device device,
-                                                    VKGpuArena *arena,
+                                                    VKGpuArena *gpu_arena,
                                                     U64 size_per_frame,
                                                     vk::BufferUsageFlags usage);
 internal void vk_destroy_transient_buffer(vk::Device device, TransientBuffer *tb);
+
+internal void vk_present(VKSwapchainConfig *config,
+                         VKSwapchainState *state,
+                         vk::Queue present_queue,
+                         VKArena *arena);
+internal bool vk_recreate_swapchain_if_needed(VkResult acquire_res,
+                                              VKSwapchainConfig *config,
+                                              VKSwapchainState *state,
+                                              VKArena *arena);
+vk::Extent2D vk_get_extent(VKSwapchainConfig *config, U32 width, U32 height);

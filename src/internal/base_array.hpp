@@ -5,6 +5,51 @@
 #include "base_arena.hpp"
 #include "base.hpp"
 
+//~ ArraySlice
+template<typename T>
+struct ArraySlice {
+  T *data{};
+  U64 length{};
+
+  T &operator[](U64 idx) {
+    if (idx >= length) {
+      INVALID_PATH;
+    }
+    return data[idx];
+  }
+
+  operator T *() { return data; }
+  operator T const *() const { return data; }
+};
+
+template<typename T>
+internal ArraySlice<T> make_slice(T &single_element) {
+  return {
+      &single_element,
+      1
+  };
+}
+
+template<typename T>
+internal ArraySlice<T> make_slice(T *data, U64 length) {
+  return {
+      data,
+      length
+  };
+}
+
+template<typename T>
+internal ArraySlice<T> make_slice(T *data, U64 start, U64 end) {
+  return {
+      data + start,
+      end - start
+  };
+}
+
+template<typename T>
+internal ArraySlice<T> make_slice(std::initializer_list<T> list) {
+  return {list.begin(), static_cast<U64>(list.size())};
+}
 
 //~ DynArray
 template<typename T>
@@ -54,6 +99,13 @@ struct DynArray {
     return out;
   }
 
+  ArraySlice<T> to_slice() {
+    ArraySlice<T> out{
+        .data = data,
+        .length = size
+    };
+  }
+
   operator T *() { return data; }
   operator T const *() const { return data; }
 };
@@ -86,16 +138,11 @@ struct Array {
     return out;
   }
 
-  DynArray<T> to_dyn(Arena *arena) {
-    DynArray<T> out{};
-    out.data = arena->push_array<T>(size());
-    out.size = size();
-    out.capacity = size();
-
-    for (U64 i = 0; i < size(); i++) {
-      out.data[i] = data[i];
-    }
-    return out;
+  ArraySlice<T> to_slice() {
+    return {
+        .data = data,
+        .length = size()
+    };
   }
 };
 
@@ -108,9 +155,3 @@ void fill_array(Array<T, SIZE> &array, T value) {
     array.data[i] = value;
   }
 }
-
-template<typename T>
-struct ArraySlice {
-  T *data{};
-  U64 length{};
-};

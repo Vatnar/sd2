@@ -92,10 +92,35 @@ internal DescriptorSetHandle alloc_set(
   return {ds, layout, device};
 }
 
-//--- Per-frame resources ---
-struct FrameResources {
-  vk::Buffer buffer{};
-  void* mapped{};
+//--- Per-frame upload arena for CPU→GPU data ---
+enum class UploadUsage : U8 { Vertex, Uniform, Storage };
+
+struct UploadSlice {
+  vk::Buffer buffer;
+  U8* base;
+  U64 offset;
+  U64 size;
+};
+
+struct FrameUpload {
+  vk::Buffer buffer;
+  U8* mapped;
+  U64 capacity;
+  U64 head;
+  U64 uniform_align;
+  U64 storage_align;
+  U64 peak_this_frame{};
+  U64 peak_ever{};
+
+  UploadSlice alloc(U64 size, U64 alignment) {
+    U64 off = (head + alignment - 1) & ~(alignment - 1);
+    ASSERT_ALWAYS(off + size <= capacity && "FrameUpload overflow");
+    head = off + size;
+    peak_this_frame = max(peak_this_frame, head);
+    peak_ever = max(peak_ever, peak_this_frame);
+
+    return {buffer, mapped, off, size};
+  }
 };
 
 //--- DescriptorSystem: owns all descriptor state ---
@@ -106,8 +131,8 @@ struct DescriptorSystem {
   DescriptorArena persistent_pool;
   DescriptorArena frame_pools[MAX_FRAMES_IN_FLIGHT];
   U32 frames_in_flight;
-  FrameResources frame_resources[MAX_FRAMES_IN_FLIGHT];
-  vk::DeviceSize globals_size;
+  FrameUpload frame_uploads[MAX_FRAMES_IN_FLIGHT];
+  vk::DeviceSize upload_capacity;
 };
 
 struct SystemConfig {
@@ -116,7 +141,9 @@ struct SystemConfig {
   VKArena* arena;
   VKGpuArena* host_arena;
   U32 frames_in_flight;
-  vk::DeviceSize globals_size;
+  vk::DeviceSize upload_capacity;
+  vk::DeviceSize uniform_align;
+  vk::DeviceSize storage_align;
   ArenaConfig persistent_config;
   ArenaConfig frame_config;
 };
@@ -126,22 +153,29 @@ internal DescriptorSystem create_system(SystemConfig const& cfg) {
   sys.device = cfg.device;
   sys.phys_dev = cfg.phys_dev;
   sys.frames_in_flight = cfg.frames_in_flight;
-  sys.globals_size = cfg.globals_size;
+  sys.upload_capacity = cfg.upload_capacity;
   sys.layouts = create_layouts(cfg.device, cfg.arena);
   sys.persistent_pool = create_arena(cfg.device, cfg.arena, cfg.persistent_config);
   for (U32 i = 0; i < cfg.frames_in_flight; ++i) {
     sys.frame_pools[i] = create_arena(cfg.device, cfg.arena, cfg.frame_config);
   }
 
+  vk::BufferUsageFlags upload_usage =
+      vk::BufferUsageFlagBits::eUniformBuffer |
+      vk::BufferUsageFlagBits::eStorageBuffer |
+      vk::BufferUsageFlagBits::eVertexBuffer;
   for (U32 i = 0; i < cfg.frames_in_flight; ++i) {
     auto [buf, alloc] = vk_create_buffer(
-        cfg.phys_dev,
-        cfg.device,
-        cfg.globals_size,
-        vk::BufferUsageFlagBits::eUniformBuffer,
-        cfg.host_arena,
-        cfg.arena);
-    sys.frame_resources[i] = {buf, alloc.mapped};
+        cfg.phys_dev, cfg.device, cfg.upload_capacity,
+        upload_usage, cfg.host_arena, cfg.arena);
+    sys.frame_uploads[i] = {
+        .buffer = buf,
+        .mapped = static_cast<U8*>(alloc.mapped),
+        .capacity = cfg.upload_capacity,
+        .head = 0,
+        .uniform_align = cfg.uniform_align,
+        .storage_align = cfg.storage_align,
+    };
   }
   return sys;
 }
@@ -149,18 +183,20 @@ internal DescriptorSystem create_system(SystemConfig const& cfg) {
 //--- FrameContext returned by begin_frame ---
 struct FrameContext {
   DescriptorSetHandle frame_set;
-  vk::Buffer globals_buffer;
-  void* globals_mapped;
+  FrameUpload* upload;
   DescriptorArena* transient_pool;
   LayoutHandle draw_layout;
   LayoutHandle frame_layout;
   vk::Device device;
-  vk::DeviceSize globals_size;
 };
 
 internal FrameContext begin_frame(DescriptorSystem* sys, U32 frame_index) {
   DescriptorArena* pool = &sys->frame_pools[frame_index];
   reset_arena(sys->device, pool);
+
+  FrameUpload* fu = &sys->frame_uploads[frame_index];
+  fu->head = 0;
+  fu->peak_this_frame = 0;
 
   LayoutHandle fl = get_layout(sys->layouts, Set::Frame);
   DescriptorSetHandle frame_set = alloc_set(sys->device, pool, fl);
@@ -168,19 +204,56 @@ internal FrameContext begin_frame(DescriptorSystem* sys, U32 frame_index) {
 
   return {
     .frame_set = frame_set,
-    .globals_buffer = sys->frame_resources[frame_index].buffer,
-    .globals_mapped = sys->frame_resources[frame_index].mapped,
+    .upload = fu,
     .transient_pool = pool,
     .draw_layout = dl,
     .frame_layout = fl,
     .device = sys->device,
-    .globals_size = sys->globals_size,
   };
 }
 
 //--- Convenience: allocate a transient draw set from frame context ---
 internal DescriptorSetHandle alloc_draw_set(FrameContext& fc) {
   return alloc_set(fc.device, fc.transient_pool, fc.draw_layout);
+}
+
+//--- Upload helpers ---
+internal U64 upload_alignment(FrameUpload* fu, UploadUsage usage) {
+  switch (usage) {
+    case UploadUsage::Uniform: return fu->uniform_align;
+    case UploadUsage::Storage: return fu->storage_align;
+    case UploadUsage::Vertex:  return 16;
+  }
+  return 16;
+}
+
+internal UploadSlice upload_alloc(FrameUpload* fu, U64 size, U64 alignment) {
+  return fu->alloc(size, alignment);
+}
+
+internal UploadSlice upload_alloc_usage(FrameUpload* fu, U64 size, UploadUsage usage) {
+  return fu->alloc(size, upload_alignment(fu, usage));
+}
+
+internal U64 upload_allocs_this_frame(FrameUpload* fu) {
+  return fu->peak_this_frame;
+}
+
+template<typename T>
+internal UploadSlice upload_struct(FrameUpload* fu, T const& v, UploadUsage usage) {
+  U64 align = max(alignof(T), upload_alignment(fu, usage));
+  auto s = fu->alloc(sizeof(T), align);
+  MemoryCopy(s.base + s.offset, &v, sizeof(T));
+  return s;
+}
+
+template<typename T>
+internal UploadSlice upload_span(FrameUpload* fu, ArraySlice<T> xs, UploadUsage usage) {
+  U64 bytes = xs.length * sizeof(T);
+  U64 align = upload_alignment(fu, usage);
+  auto s = fu->alloc(bytes, align);
+  MemoryCopy(s.base + s.offset, xs.data, bytes);
+  return s;
 }
 
 } // namespace sd::desc

@@ -138,6 +138,11 @@ FORCE_INLINE void FrameClock::submit_sim_sample(U32 fixed_steps,
   report.dropped_ms = ema_update(report.dropped_ms, new_dropped_ms, alpha);
 }
 
+void FrameClock::end_frame() {
+  clock_gettime(CLOCK_MONOTONIC, &frame_end);
+  write_report();
+}
+
 void FrameClock::wait_for_target() {
   do {
     clock_gettime(CLOCK_MONOTONIC, &frame_end);
@@ -339,27 +344,34 @@ constexpr glm::vec3 Camera::world_up() {
   return {0.0f, 0.0f, 1.0f};
 }
 
-internal void find_target_ms(F64 *target_frame_ms, GLFWwindow *glfw_window, FrameClock *clock) {
+internal GLFWmonitor *find_monitor_under_window(GLFWwindow *glfw_window) {
   int wx, wy, ww, wh;
   glfwGetWindowPos(glfw_window, &wx, &wy);
   glfwGetWindowSize(glfw_window, &ww, &wh);
-  int win_cx = wx + ww / 2;
-  int win_cy = wy + wh / 2;
-
-  U32 monitor_hz = 60;
+  int cx = wx + ww / 2, cy = wy + wh / 2;
   int count;
   GLFWmonitor **monitors = glfwGetMonitors(&count);
   for (int i = 0; i < count; i++) {
     int mx, my;
     glfwGetMonitorPos(monitors[i], &mx, &my);
     GLFWvidmode const *mode = glfwGetVideoMode(monitors[i]);
-    if (win_cx >= mx && win_cx < mx + static_cast<int>(mode->width) && win_cy >= my &&
-        win_cy < my + static_cast<int>(mode->height)) {
-      monitor_hz = mode->refreshRate > 0 ? mode->refreshRate : 60;
-      break;
-    }
+    if (cx >= mx && cx < mx + static_cast<int>(mode->width) &&
+        cy >= my && cy < my + static_cast<int>(mode->height))
+      return monitors[i];
   }
+  return glfwGetPrimaryMonitor();
+}
+
+internal void find_target_ms(F64 *target_frame_ms, GLFWwindow *glfw_window, FrameClock *clock) {
+  GLFWmonitor *mon = find_monitor_under_window(glfw_window);
+  GLFWvidmode const *mode = glfwGetVideoMode(mon);
+  U32 monitor_hz = mode->refreshRate > 0 ? mode->refreshRate : 60;
   *target_frame_ms = 1000.0 / monitor_hz;
   clock->target_ms = *target_frame_ms;
+#ifdef SD2_DEBUG
   printf("Monitor: %u Hz (target: %.3f ms/frame)\n", monitor_hz, *target_frame_ms);
+#  endif
+  clock->report.monitor_hz = static_cast<F32>(monitor_hz);
+  if (g_dbg_ctx.max_fps <= 0.0f)
+    g_dbg_ctx.max_fps = static_cast<float>(monitor_hz);
 }

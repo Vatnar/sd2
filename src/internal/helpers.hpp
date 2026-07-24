@@ -48,6 +48,7 @@ struct TimeReport {
   F32 sim_utilization{};
   bool hit_max_steps{};
   F32 sim_work_ms{};
+  F32 monitor_hz{};
 };
 
 struct SimTimingSample {
@@ -86,6 +87,7 @@ struct FrameClock {
                          F32 accumulator,
                          F32 sim_work_ms,
                          bool hit_max_steps);
+  void end_frame();
   void wait_for_target();
 
   [[nodiscard]] FORCE_INLINE F64 total_ms() const { return diff_ms(frame_start, frame_end); }
@@ -97,6 +99,7 @@ struct FrameClock {
 
 constexpr U32 MAX_INSTANCE_EXTENSIONS = 16;
 internal U32 glfw_get_required_extensions(char const **out_extensions, U32 max_extensions);
+internal GLFWmonitor *find_monitor_under_window(GLFWwindow *glfw_window);
 
 struct Camera {
   glm::vec3 camera_pos;

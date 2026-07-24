@@ -729,22 +729,33 @@ vk_create_swapchain_config(vk::Device device,
     chosen_format = formats[0].format;
     chosen_color_space = formats[0].colorSpace;
   }
-  vk::PresentModeKHR chosen_present_mode = vk::PresentModeKHR::eMailbox;
-  bool mode_found = false;
-  for (U32 i = 0; i < mode_count; ++i) {
-    if (present_modes[i] == chosen_present_mode) {
-      mode_found = true;
-      break;
+  vk::PresentModeKHR fast_mode = vk::PresentModeKHR::eMailbox;
+  {
+    bool found = false;
+    for (U32 i = 0; i < mode_count; ++i) {
+      if (present_modes[i] == fast_mode) { found = true; break; }
     }
-  }
-  if (!mode_found) {
-    chosen_present_mode = vk::PresentModeKHR::eFifo;
+    if (!found) {
+      fast_mode = vk::PresentModeKHR::eImmediate;
+      for (U32 i = 0; i < mode_count; ++i) {
+        if (present_modes[i] == fast_mode) { found = true; break; }
+      }
+      if (!found) fast_mode = vk::PresentModeKHR::eFifo;
+    }
   }
   out.image_format = chosen_format;
   out.color_space = chosen_color_space;
-  out.present_mode = chosen_present_mode;
+  out.present_mode = vk::PresentModeKHR::eFifo;
+  out.fast_present_mode = fast_mode;
+  out.vsync_on = true;
   out.msaa_samples = vk_get_max_usable_sample_count(phys_dev);
   return out;
+}
+
+internal void vk_toggle_vsync(VKSwapchainConfig *config, VKSwapchainState *state) {
+  config->vsync_on = !config->vsync_on;
+  config->present_mode = config->vsync_on ? vk::PresentModeKHR::eFifo : config->fast_present_mode;
+  state->needs_rebuild = true;
 }
 
 vk::Extent2D vk_get_extent(VKSwapchainConfig *config, U32 width, U32 height) {
@@ -1209,6 +1220,7 @@ void vk_present(VKSwapchainConfig *config, VKSwapchainState *state, vk::Queue pr
 
     imgui_set_min_image_count(state->sc_res->image_count);
     config->window->framebuffer_resized = false;
+    state->needs_rebuild = false;
   } else if (vk_present_res != VK_SUCCESS) {
     std::fprintf(stderr, "vkQueuePresentKHR failed: %d\n", vk_present_res);
     TRAP();

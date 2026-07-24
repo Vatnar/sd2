@@ -30,7 +30,13 @@ struct DebugCtx {
   Camera *camera;
   bool *debug_show_scroll_info;
   bool *debug_show_line_width{};
+  bool *debug_show_upload_usage{};
+  bool *debug_show_frame_pacing{};
+  sd::desc::FrameUpload *upload{};
+  VKSwapchainConfig *sc_config{};
+  VKSwapchainState *sc_state{};
   float line_width{5.0f};
+  float max_fps{0.0f};
 };
 
 static DebugCtx g_dbg_ctx{};
@@ -161,7 +167,6 @@ int main() {
   load_debug_ui_state();
 
   F64 target_frame_ms = 1000.0 / 60;
-  bool monitor_detected = false;
   bool paused = false;
   PaletteState palette_state{};
 
@@ -216,6 +221,9 @@ int main() {
   VKSwapchainState vk_sc_state{
       .extent = vk_get_extent(&vk_sc_config, app_params.width, app_params.height),
   };
+
+  g_dbg_ctx.sc_config = &vk_sc_config;
+  g_dbg_ctx.sc_state = &vk_sc_state;
 
   vk_create_swapchain(
       &vk_sc_config,
@@ -305,9 +313,22 @@ int main() {
                                                        g_dbg_ctx),
                                                    PaletteAction::toggle<^^DebugCtx::debug_show_scroll_info>(
                                                        g_dbg_ctx),
-                                                   PaletteAction::toggle<^^
-                                                     DebugCtx::debug_show_line_width>(g_dbg_ctx),
-                                               });
+                                                    PaletteAction::toggle<^^
+                                                      DebugCtx::debug_show_line_width>(g_dbg_ctx),
+                                                    PaletteAction::toggle<^^
+                                                      DebugCtx::debug_show_upload_usage>(
+                                                        g_dbg_ctx),
+                                                    PaletteAction::toggle<^^
+                                                      DebugCtx::debug_show_frame_pacing>(
+                                                        g_dbg_ctx),
+                                                    PaletteAction::call("toggle vsync",
+                                                                        [] {
+                                                                          vk_toggle_vsync(
+                                                                              g_dbg_ctx.sc_config,
+                                                                              g_dbg_ctx.sc_state);
+                                                                        }
+                                                        ),
+                                                });
   debug_ui_palette_init(&palette_state, pa);
 
   vk_create_depth_resources(
@@ -316,13 +337,16 @@ int main() {
       &vk_sc_config.swapchain_pool[0].sc_res_arena);
 
   //--- Descriptor system ---
+  vk::PhysicalDeviceProperties props = vk_phys_dev.getProperties();
   sd::desc::DescriptorSystem desc_sys = sd::desc::create_system({
       .phys_dev = vk_phys_dev,
       .device = vk_device,
       .arena = &app_arena,
       .host_arena = &vk_host_arena,
       .frames_in_flight = MAX_FRAMES_IN_FLIGHT,
-      .globals_size = sizeof(CameraUBO),
+      .upload_capacity = kb(256),
+      .uniform_align = props.limits.minUniformBufferOffsetAlignment,
+      .storage_align = props.limits.minStorageBufferOffsetAlignment,
       .persistent_config = {
           .max_sets = 1024,
           .set_counts = {0, 1, 0},
@@ -604,20 +628,6 @@ int main() {
                                                                         vk_graphics_queue,
                                                                         vertices,
                                                                         indices);
-  TransientBuffer debug_line_stream = vk_create_transient_buffer(vk_phys_dev,
-                                                                 vk_device,
-                                                                 &vk_host_arena,
-                                                                 &app_arena,
-                                                                 kb(64),
-                                                                 vk::BufferUsageFlagBits::eVertexBuffer);
-
-  TransientBuffer arrows = vk_create_transient_buffer(vk_phys_dev,
-                                                      vk_device,
-                                                      &vk_host_arena,
-                                                      &app_arena,
-                                                      kb(64),
-                                                      vk::BufferUsageFlagBits::eStorageBuffer);
-
   //--- Material table + texture registration ---
   sd::MaterialTable materials = sd::create_material_table({
       .device = vk_device,
@@ -673,12 +683,16 @@ int main() {
     constexpr U32 MAX_STEPS_PER_FRAME = static_cast<U32>(MAX_FRAME_TIME / FIXED_DT);
     auto prev_tick = Clock::now();
     F32 accumulator = 0.0f;
+    GLFWmonitor *last_monitor = nullptr;
 
     //~ Main Loop
     while (!glfwWindowShouldClose(window.glfw_window)) {
-      if (!monitor_detected) [[unlikely]] {
-        find_target_ms(&target_frame_ms, window.glfw_window, &clock);
-        monitor_detected = true;
+      if (absolute_frame_index % 120 == 0) [[unlikely]] {
+        GLFWmonitor *cur_mon = find_monitor_under_window(window.glfw_window);
+        if (cur_mon != last_monitor) {
+          find_target_ms(&target_frame_ms, window.glfw_window, &clock);
+          last_monitor = cur_mon;
+        }
       }
       clock.start();
 
@@ -803,9 +817,9 @@ int main() {
 
       //~ Begin frame descriptor state
       sd::desc::FrameContext fc = sd::desc::begin_frame(&desc_sys, current_frame);
+      g_dbg_ctx.upload = fc.upload;
 
       //~ Render state stuff
-      debug_line_stream.reset(current_frame);
       Array line_vertices = {
           LineVertex{{0.0f, 0.0f, 0.0f}, {1.0f, 0.0f, 0.0f, 1.0f}},
           LineVertex{{1.0f, 0.0f, 0.0f}, {1.0f, 0.0f, 0.0f, 1.0f}},
@@ -814,34 +828,25 @@ int main() {
           LineVertex{{0.0f, 0.0f, 0.0f}, {0.0f, 0.0f, 1.0f, 1.0f}},
           LineVertex{{0.0f, 0.0f, 1.0f}, {0.0f, 0.0f, 1.0f, 1.0f}},
       };
-      TransientAlloc line_alloc = debug_line_stream.alloc(
-          current_frame,
-          line_vertices.byte_count(),
-          alignof(LineVertex));
-
-      MemoryCopy(line_alloc.mapped, line_vertices, sizeof(line_vertices));
+      sd::desc::UploadSlice line_slice = sd::desc::upload_span(
+          fc.upload, line_vertices.to_slice(), sd::desc::UploadUsage::Vertex);
 
       // procedural arrows :)
-      arrows.reset(current_frame);
       Array current_arrows = {
           Arrow{.origin = {1.0f, 1.0f, 1.0f}, .direction = {1.0f, 0.0f, 0.0f}, .magnitude = 1.0f, .width = 0.5f,
                 .roundness = 5.0f, .color = {1.0f, 0.0f, 0.0f, 1.0f}, .flags = 0},
           Arrow{.origin = {1.0f, -1.0f, 1.0f}, .direction = {1.0f, 1.0f, 0.0f}, .magnitude = 1.0f, .width = 1.0f,
                 .roundness = 5.0f, .color = {0.0f, 1.0f, 0.0f, 1.0f}, .flags = 0}
       };
-      TransientAlloc arrow_alloc = arrows.alloc(
-          current_frame,
-          current_arrows.byte_count(),
-          alignof(Arrow));
-
-      MemoryCopy(arrow_alloc.mapped, current_arrows, sizeof(current_arrows));
+      sd::desc::UploadSlice arrow_slice = sd::desc::upload_span(
+          fc.upload, current_arrows.to_slice(), sd::desc::UploadUsage::Storage);
 
       sd::desc::DescriptorSetHandle arrow_set = sd::desc::alloc_draw_set(fc);
       sd::desc::begin_write(arrow_set)
           .buffer(sd::desc::DrawBinding::Payload,
-                  arrow_alloc.buffer,
-                  arrow_alloc.offset,
-                  arrow_alloc.size)
+                  arrow_slice.buffer,
+                  arrow_slice.offset,
+                  arrow_slice.size)
           .commit();
 
 
@@ -964,9 +969,8 @@ int main() {
       vk_cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, vk_line_pipeline);
       vk_cmd.setLineWidth(g_dbg_ctx.line_width);
       vk_cmd.bindVertexBuffers(0,
-                               line_alloc.buffer,
-                               {line_alloc.offset
-                               });
+                               line_slice.buffer,
+                               {line_slice.offset});
       sd::cmd::bind_frame_set(vk_cmd, line_pipe_layout, fc.frame_set);
       vk_cmd.draw(line_vertices.size(), 1, 0, 0);
 
@@ -1010,8 +1014,13 @@ int main() {
       vk_present(&vk_sc_config, &vk_sc_state, vk_present_queue, &app_arena);
 
       clock.mark_work_done();
-      {
+      if (vk_sc_config.vsync_on) {
+        clock.end_frame();
+      } else if (g_dbg_ctx.max_fps > 0.0f) {
+        clock.target_ms = 1000.0 / g_dbg_ctx.max_fps;
         clock.wait_for_target();
+      } else {
+        clock.end_frame();
       }
 
       absolute_frame_index++;

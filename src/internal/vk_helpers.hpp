@@ -75,6 +75,8 @@ struct VKSwapchainConfig {
   vk::Format image_format{};
   vk::ColorSpaceKHR color_space{};
   vk::PresentModeKHR present_mode{};
+  vk::PresentModeKHR fast_present_mode{};
+  bool vsync_on = false;
 
   vk::SampleCountFlagBits msaa_samples{};
 
@@ -410,3 +412,4 @@ internal bool vk_recreate_swapchain_if_needed(VkResult acquire_res,
                                               VKSwapchainState *state,
                                               VKArena *arena);
 vk::Extent2D vk_get_extent(VKSwapchainConfig *config, U32 width, U32 height);
+internal void vk_toggle_vsync(VKSwapchainConfig *config, VKSwapchainState *state);

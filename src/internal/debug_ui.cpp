@@ -123,6 +123,8 @@ struct DebugUIState {
   bool debug_show_scroll_info = false;
   bool debug_show_camera_info = false;
   bool debug_show_line_width = false;
+  bool debug_show_upload_usage = false;
+  bool debug_show_frame_pacing = false;
 };
 
 static DebugUIState g_ui{};
@@ -156,8 +158,10 @@ internal void debug_ui_debug_ui(TimeReport *report) {
     g_dbg_ctx.debug_show_camera_info = &g_ui.debug_show_camera_info;
   [[unlikely]] if (!g_dbg_ctx.debug_show_line_width)
     g_dbg_ctx.debug_show_line_width = &g_ui.debug_show_line_width;
-  [[unlikely]] if (!g_dbg_ctx.debug_show_line_width)
-    g_dbg_ctx.debug_show_line_width = &g_ui.debug_show_line_width;
+  [[unlikely]] if (!g_dbg_ctx.debug_show_upload_usage)
+    g_dbg_ctx.debug_show_upload_usage = &g_ui.debug_show_upload_usage;
+  [[unlikely]] if (!g_dbg_ctx.debug_show_frame_pacing)
+    g_dbg_ctx.debug_show_frame_pacing = &g_ui.debug_show_frame_pacing;
 
   //~ Debug UI
   if (g_ui.debug_show_ui) {
@@ -322,14 +326,72 @@ internal void debug_ui_debug_ui(TimeReport *report) {
         imgui_draw_glm_vec32f("right", g_dbg_ctx.camera->right());
         imgui_draw_glm_vec32f("up   ", g_dbg_ctx.camera->up());
       }
+
+      if (*g_dbg_ctx.debug_show_upload_usage) {
+        ImGui::SeparatorText("Upload usage");
+        if (sd::desc::FrameUpload *fu = g_dbg_ctx.upload) {
+          U64 pct = fu->capacity ? fu->peak_this_frame * 100 / fu->capacity : 0;
+          ImGui::Text("This frame: %llu / %llu (%llu%%)",
+                      static_cast<unsigned long long>(fu->peak_this_frame),
+                      static_cast<unsigned long long>(fu->capacity),
+                      (unsigned long long)pct);
+          U64 peak_pct = fu->capacity ? fu->peak_ever * 100 / fu->capacity : 0;
+          ImGui::Text("Peak ever: %llu / %llu (%llu%%)",
+                      (unsigned long long)fu->peak_ever,
+                      (unsigned long long)fu->capacity,
+                      (unsigned long long)peak_pct);
+          ImGui::ProgressBar((float)fu->peak_this_frame / (float)fu->capacity,
+                             ImVec2(-FLT_MIN, 0),
+                             "");
+        } else {
+          ImGui::Text("upload not available");
+        }
+      }
     }
     ImGui::End();
   }
 
 
-  if (*g_dbg_ctx.debug_show_line_width) {
+  if
+  (*g_dbg_ctx
+    .
+    debug_show_line_width
+  ) {
     if (ImGui::Begin("Line Width", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
       ImGui::SliderFloat("Width", &g_dbg_ctx.line_width, 1.0f, 20.0f, "%.1f");
+    }
+    ImGui::End();
+  }
+
+  if (*g_dbg_ctx.debug_show_frame_pacing) {
+    if (ImGui::Begin("Frame Pacing", nullptr, ImGuiWindowFlags_AlwaysAutoResize)) {
+      bool vsync = g_dbg_ctx.sc_config ? g_dbg_ctx.sc_config->vsync_on : false;
+      ImGui::Text("VSync: %s", vsync ? "ON (FIFO)" : "OFF");
+
+      VKSwapchainConfig *cfg = g_dbg_ctx.sc_config;
+      if (cfg) {
+        char const *mode_name = "?";
+        switch (cfg->present_mode) {
+          case vk::PresentModeKHR::eFifo: mode_name = "FIFO"; break;
+          case vk::PresentModeKHR::eMailbox: mode_name = "Mailbox"; break;
+          case vk::PresentModeKHR::eImmediate: mode_name = "Immediate"; break;
+          default: break;
+        }
+        ImGui::Text("Present mode: %s", mode_name);
+      }
+
+      if (g_dbg_ctx.clock) {
+        ImGui::Text("Monitor: %.0f Hz", g_dbg_ctx.clock->report.monitor_hz);
+        ImGui::Text("FPS: %.1f", g_dbg_ctx.clock->report.fps);
+        ImGui::Text("Target FPS: %.0f", g_dbg_ctx.clock->report.target_fps);
+      }
+
+      ImGui::Separator();
+      ImGui::SliderFloat("FPS Limit", &g_dbg_ctx.max_fps, 0.0f, 360.0f, "%.0f");
+      if (g_dbg_ctx.max_fps <= 0.0f) {
+        ImGui::SameLine();
+        ImGui::TextDisabled("(unlimited)");
+      }
     }
     ImGui::End();
   }

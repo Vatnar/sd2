@@ -2,16 +2,6 @@
 
 #include "descriptor_schema.hpp"
 
-namespace sd::desc {
-
-#ifdef SD2_DEBUG
-internal bool pipeline_has_set(PipelineLayout const& layout, Set set) {
-  return layout.slot[U32(set)] != 0xFF;
-}
-#endif
-
-} // namespace sd::desc
-
 namespace sd::cmd {
 
 #ifdef SD2_DEBUG

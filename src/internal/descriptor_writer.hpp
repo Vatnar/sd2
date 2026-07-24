@@ -113,15 +113,15 @@ struct DescriptorWriter {
 
 //--- Convenience: upload globals data + write the descriptor ---
 internal void upload_globals(FrameContext& fc, void const* data, U64 size) {
-  MemoryCopy(fc.globals_mapped, data, size);
+  UploadSlice s = upload_alloc_usage(fc.upload, size, UploadUsage::Uniform);
+  MemoryCopy(s.base + s.offset, data, size);
   DescriptorWriter{fc.frame_set}
-    .buffer(FrameBinding::Globals, fc.globals_buffer, 0, size)
+    .buffer(FrameBinding::Globals, s.buffer, s.offset, size)
     .commit();
 }
 
 template<typename T>
 internal void upload_globals(FrameContext& fc, T const& data) {
-  ASSERT_ALWAYS(sizeof(T) <= fc.globals_size && "Globals type exceeds globals buffer size");
   upload_globals(fc, &data, sizeof(T));
 }
 

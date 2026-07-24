@@ -1,6 +1,6 @@
 struct CameraUBO {
-    float4x4 view;
-    float4x4 proj;
+    [[column_major]] float4x4 view;
+    [[column_major]] float4x4 proj;
 };
 struct Arrow {
     float3 origin;
@@ -23,14 +23,13 @@ struct Arrow {
  struct VSOutput {
      float4 pos : SV_Position;
      float2 local : TEXCOORD0;
-     nointerpolation uint iid : TEXCOORD1;
+     float4 color : COLOR0;
  };
 
  [[shader("vertex")]]
  VSOutput vert_main(VSInput input) {
      VSOutput out;
      Arrow arrow = arrows[input.iid];
-     out.iid = input.iid;
 
      const float2 corners[4] = {
          float2(-0.5, -0.5), 
@@ -54,17 +53,13 @@ struct Arrow {
      float4 clip = mul(camera.proj, view);
      out.pos = clip;
      out.local = c;
+     out.color = arrow.color;
 
      return out;
  }
 
  [[shader("fragment")]]
  float4 frag_main(VSOutput input) {
-
-     Arrow arrow = arrows[input.iid];
-     if (distance(input.local, float2(0, 0)) > 0.5) {
-         discard;
-     }
-     return arrow.color - 2*distance(input.local, float2(0,0));
+     return float4(1.0, 0.0, 0.0, 1.0);
  }
 

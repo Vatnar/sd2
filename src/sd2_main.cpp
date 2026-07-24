@@ -73,18 +73,6 @@ struct Arrow {
   static constexpr U64 vertex_count_per_arrow() {
     return 6; // draw quad which we fill in fragment
   }
-
-  static constexpr Array<vk::DescriptorSetLayoutBinding, 1> get_dsl_bindings() {
-    return {
-
-        vk::DescriptorSetLayoutBinding{
-            .binding = 0,
-            .descriptorType = vk::DescriptorType::eStorageBuffer,
-            .descriptorCount = 1,
-            .stageFlags = vk::ShaderStageFlagBits::eVertex | vk::ShaderStageFlagBits::eFragment
-        }
-    };
-  }
 };
 
 struct TextureVertex {
@@ -131,20 +119,15 @@ struct std::hash<TextureVertex> {
 
 struct ModelPC {
   alignas(16) glm::mat4 model;
+  S32 material_id{};
 };
+
+static_assert(offsetof(ModelPC, model) == 0);
+static_assert(offsetof(ModelPC, material_id) == 64);
 
 struct CameraUBO {
   alignas(16) glm::mat4 view;
   alignas(16) glm::mat4 proj;
-
-  static constexpr Array<vk::DescriptorSetLayoutBinding, 1> get_dsl_bindings() {
-    return {
-        vk::DescriptorSetLayoutBinding{.binding = 0,
-                                       .descriptorType = vk::DescriptorType::eUniformBuffer,
-                                       .descriptorCount = 1,
-                                       .stageFlags = vk::ShaderStageFlagBits::eVertex}
-    };
-  }
 };
 
 constexpr uint32_t WIDTH = 800;
@@ -332,45 +315,56 @@ int main() {
       &vk_sc_state,
       &vk_sc_config.swapchain_pool[0].sc_res_arena);
 
-  vk::DescriptorSetLayout camera_dsl = create_descriptor_set_layout(
-      vk_device,
-      &app_arena,
-      CameraUBO::get_dsl_bindings().to_slice()
-      );
+  //--- Descriptor system ---
+  sd::desc::DescriptorSystem desc_sys = sd::desc::create_system({
+      .phys_dev = vk_phys_dev,
+      .device = vk_device,
+      .arena = &app_arena,
+      .host_arena = &vk_host_arena,
+      .frames_in_flight = MAX_FRAMES_IN_FLIGHT,
+      .globals_size = sizeof(CameraUBO),
+      .persistent_config = {
+          .max_sets = 1024,
+          .set_counts = {0, 1, 0},
+          .flags = vk::DescriptorPoolCreateFlagBits::eUpdateAfterBind,
+      },
+      .frame_config = {
+          .max_sets = 257,
+          .set_counts = {1, 0, 256},
+      },
+  });
 
-  vk::DescriptorSetLayout mesh_dsl = create_descriptor_set_layout(
-      vk_device,
-      &app_arena,
-      Array{
-          vk::DescriptorSetLayoutBinding{.binding = 0,
-                                         .descriptorType = vk::DescriptorType::eCombinedImageSampler,
-                                         .descriptorCount = 1,
-                                         .stageFlags = vk::ShaderStageFlagBits::eFragment},
-      }.to_slice()
-      );
-  vk::DescriptorSetLayout arrow_dsl = create_descriptor_set_layout(
-      vk_device,
-      &app_arena,
-      Arrow::get_dsl_bindings().to_slice());
+  //--- Pipeline layouts from set declarations ---
+  vk::PushConstantRange mesh_pc{
+      .stageFlags = vk::ShaderStageFlagBits::eVertex,
+      .offset = 0,
+      .size = static_cast<U32>(offsetof(ModelPC, material_id) + sizeof(S32)),
+  };
 
-  vk::PushConstantRange mesh_pc{.stageFlags = vk::ShaderStageFlagBits::eVertex, .offset = 0, .size = sizeof(ModelPC)};
+  auto mesh_sets = Array{sd::desc::Set::Frame, sd::desc::Set::Material}.to_slice();
+  auto line_sets = Array{sd::desc::Set::Frame}.to_slice();
+  auto arrow_sets = Array{sd::desc::Set::Frame, sd::desc::Set::Draw}.to_slice();
 
-  vk::PipelineLayout mesh_pipe_layout = create_pipeline_layout(
+  sd::desc::PipelineLayout mesh_pipe_layout = sd::desc::create_pipeline_layout(
       vk_device,
       &app_arena,
-      Array{camera_dsl, mesh_dsl}.to_slice(),
+      desc_sys.layouts,
+      mesh_sets,
       make_slice(mesh_pc));
 
-  vk::PipelineLayout line_pipe_layout = create_pipeline_layout(
+  sd::desc::PipelineLayout line_pipe_layout = sd::desc::create_pipeline_layout(
       vk_device,
       &app_arena,
-      make_slice(camera_dsl),
+      desc_sys.layouts,
+      line_sets,
       {});
 
-  vk::PipelineLayout arrow_pipe_layout = create_pipeline_layout(vk_device,
-                                                                &app_arena,
-                                                                Array{camera_dsl, arrow_dsl}.to_slice(),
-                                                                {});
+  sd::desc::PipelineLayout arrow_pipe_layout = sd::desc::create_pipeline_layout(
+      vk_device,
+      &app_arena,
+      desc_sys.layouts,
+      arrow_sets,
+      {});
 
 
   //~ Graphics Pipeline Libraries (GPL)
@@ -441,12 +435,12 @@ int main() {
 
     vk_model_b = create_pre_raster_library(vk_device,
                                            &app_arena,
-                                           mesh_pipe_layout,
+                                           mesh_pipe_layout.handle,
                                            PreRasterLibDesc{.shader_stages = make_slice(mesh_vert)});
 
     vk_model_c = create_fragment_library(vk_device,
                                          &app_arena,
-                                         mesh_pipe_layout,
+                                         mesh_pipe_layout.handle,
                                          FragmentLibDesc{.fragment_shader = &mesh_frag,
                                                          .msaa_samples = vk_sc_config.msaa_samples,
                                                          .sample_shading_enable = vk::True,
@@ -456,7 +450,7 @@ int main() {
     vk_graphics_pipeline = create_linked_pipeline(
         vk_device,
         &app_arena,
-        mesh_pipe_layout,
+        mesh_pipe_layout.handle,
         Array{vk_model_a, vk_model_b, vk_model_c, pipe_msaa_enabled_out}.to_slice(),
         vk_sc_config.image_format,
         vk_sc_state.depth.format);
@@ -473,7 +467,7 @@ int main() {
 
     pipe_line_vert = create_pre_raster_library(vk_device,
                                                &app_arena,
-                                               line_pipe_layout,
+                                               line_pipe_layout.handle,
                                                PreRasterLibDesc{.shader_stages = make_slice(line_vert),
                                                                 .line_width = 5.0f,
                                                                 .dynamic_states = Array{
@@ -484,7 +478,7 @@ int main() {
 
     pipe_line_frag = create_fragment_library(vk_device,
                                              &app_arena,
-                                             line_pipe_layout,
+                                             line_pipe_layout.handle,
                                              FragmentLibDesc{.fragment_shader = &line_frag,
                                                              .msaa_samples = vk_sc_config.msaa_samples,
                                                              .sample_shading_enable = vk::True,
@@ -493,7 +487,7 @@ int main() {
     vk_line_pipeline = create_linked_pipeline(
         vk_device,
         &app_arena,
-        line_pipe_layout,
+        line_pipe_layout.handle,
         Array{pipe_line_input, pipe_line_vert, pipe_line_frag, pipe_msaa_enabled_out}.to_slice(),
         vk_sc_config.image_format,
         vk_sc_state.depth.format);
@@ -504,12 +498,12 @@ int main() {
 
     pipe_arrow_vertex = create_pre_raster_library(vk_device,
                                                   &app_arena,
-                                                  arrow_pipe_layout,
+                                                  arrow_pipe_layout.handle,
                                                   PreRasterLibDesc{.shader_stages = make_slice(arrow_vert)});
 
     pipe_arrow_frag = create_fragment_library(vk_device,
                                               &app_arena,
-                                              arrow_pipe_layout,
+                                              arrow_pipe_layout.handle,
                                               FragmentLibDesc{.fragment_shader = &arrow_frag,
                                                               .msaa_samples = vk_sc_config.msaa_samples,
                                                               .sample_shading_enable = true,
@@ -518,7 +512,7 @@ int main() {
     vk_arrow_pipeline = create_linked_pipeline(
         vk_device,
         &app_arena,
-        arrow_pipe_layout,
+        arrow_pipe_layout.handle,
         Array{pipe_no_vert_input, pipe_arrow_vertex, pipe_arrow_frag, pipe_msaa_enabled_out}.to_slice(),
         vk_sc_config.image_format,
         vk_sc_state.depth.format);
@@ -624,109 +618,22 @@ int main() {
                                                       kb(64),
                                                       vk::BufferUsageFlagBits::eStorageBuffer);
 
-  // TODO: extract to create_uniform_descriptors(device, phys_dev, host_arena, tex_sampler, tex_image, ...) ->
-  // {uniform_buffers, descriptor_pool, descriptor_sets, uniform_buffers_mapped}
-  //~ Uniform Buffers + Descriptors
-  Array<vk::Buffer, MAX_FRAMES_IN_FLIGHT> vk_camera_ub{};
-  Array<void *, MAX_FRAMES_IN_FLIGHT> vk_camera_ub_mapped{};
+  //--- Material table + texture registration ---
+  sd::MaterialTable materials = sd::create_material_table({
+      .device = vk_device,
+      .phys_dev = vk_phys_dev,
+      .arena = &app_arena,
+      .host_arena = &vk_host_arena,
+      .descs = &desc_sys,
+      .sampler = vk_sampler,
+  });
 
-  vk::DescriptorPool vk_descriptor_pool{};
-
-  Array<vk::DescriptorSet, MAX_FRAMES_IN_FLIGHT> vk_camera_ds{};
-  Array<vk::DescriptorSet, MAX_FRAMES_IN_FLIGHT> vk_mesh_ds{};
-  Array<vk::DescriptorSet, MAX_FRAMES_IN_FLIGHT> vk_arrow_ds{};
-  {
-    for (U64 i = 0; i < MAX_FRAMES_IN_FLIGHT; ++i) {
-      vk::DeviceSize buffer_size = sizeof(CameraUBO);
-      auto [ub, ub_alloc] = vk_create_buffer(vk_phys_dev,
-                                             vk_device,
-                                             buffer_size,
-                                             vk::BufferUsageFlagBits::eUniformBuffer,
-                                             &vk_host_arena,
-                                             &app_arena);
-      vk_camera_ub[i] = ub;
-      vk_camera_ub_mapped[i] = ub_alloc.mapped;
-    }
-
-    // TODO: Replace with one persistently mapped per-frame/ ring buffer
-    Array pool_sizes{
-        vk::DescriptorPoolSize{.type = vk::DescriptorType::eUniformBuffer, .descriptorCount = MAX_FRAMES_IN_FLIGHT},
-        vk::DescriptorPoolSize{.type = vk::DescriptorType::eCombinedImageSampler,
-                               .descriptorCount = MAX_FRAMES_IN_FLIGHT},
-        vk::DescriptorPoolSize{.type = vk::DescriptorType::eStorageBuffer, .descriptorCount = MAX_FRAMES_IN_FLIGHT},
-    };
-
-    vk::DescriptorPoolCreateInfo dpci{
-        .flags = vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet,
-        .maxSets = 3 * MAX_FRAMES_IN_FLIGHT,
-        .poolSizeCount = pool_sizes.size(),
-        .pPoolSizes = pool_sizes
-    };
-    vk_descriptor_pool = app_arena.ds.push(vk_abort_if_error(vk_device.createDescriptorPoolUnique(dpci)));;
-    {
-      Array<vk::DescriptorSetLayout, MAX_FRAMES_IN_FLIGHT> layouts{};
-      fill_array(layouts, camera_dsl);
-      vk::DescriptorSetAllocateInfo alloc_info{
-          .descriptorPool = vk_descriptor_pool,
-          .descriptorSetCount = layouts.size(),
-          .pSetLayouts = layouts
-      };
-      vk_abort_if_error(vk_device.allocateDescriptorSets(&alloc_info, vk_camera_ds));
-    }
-    {
-      Array<vk::DescriptorSetLayout, MAX_FRAMES_IN_FLIGHT> layouts{};
-      fill_array(layouts, mesh_dsl);
-      vk::DescriptorSetAllocateInfo alloc_info{
-          .descriptorPool = vk_descriptor_pool,
-          .descriptorSetCount = layouts.size(),
-          .pSetLayouts = layouts
-      };
-      vk_abort_if_error(vk_device.allocateDescriptorSets(&alloc_info, vk_mesh_ds));
-    }
-    {
-      Array<vk::DescriptorSetLayout, MAX_FRAMES_IN_FLIGHT> layouts{};
-      fill_array(layouts, arrow_dsl);
-      vk::DescriptorSetAllocateInfo alloc_info{
-          .descriptorPool = vk_descriptor_pool,
-          .descriptorSetCount = layouts.size(),
-          .pSetLayouts = layouts
-      };
-      vk_abort_if_error(vk_device.allocateDescriptorSets(&alloc_info, vk_arrow_ds));
-    }
-
-    for (U64 i = 0; i < MAX_FRAMES_IN_FLIGHT; ++i) {
-      vk::DescriptorBufferInfo camera_buffer_info{
-          .buffer = vk_camera_ub[i],
-          .offset = 0,
-          .range = sizeof(CameraUBO)
-      };
-      vk::WriteDescriptorSet camera_write{
-          .dstSet = vk_camera_ds[i],
-          .dstBinding = 0,
-          .dstArrayElement = 0,
-          .descriptorCount = 1,
-          .descriptorType = vk::DescriptorType::eUniformBuffer,
-          .pBufferInfo = &camera_buffer_info,
-      };
-
-      vk::DescriptorImageInfo image_info{
-          .sampler = vk_sampler,
-          .imageView = vk_tex.image_view,
-          .imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal,
-      };
-      vk::WriteDescriptorSet mesh_write{
-          .dstSet = vk_mesh_ds[i],
-          .dstBinding = 0,
-          .dstArrayElement = 0,
-          .descriptorCount = 1,
-          .descriptorType = vk::DescriptorType::eCombinedImageSampler,
-          .pImageInfo = &image_info,
-      };
-
-      Array descriptor_writes{camera_write, mesh_write};
-      vk_device.updateDescriptorSets(descriptor_writes.data, {});
-    }
-  }
+  sd::TextureId albedo_tex = sd::register_texture(&materials, vk_tex.image_view);
+  sd::MaterialHandle brick_mat = sd::create_material(&materials,
+                                                     {
+                                                         .albedo_index = static_cast<S32>(albedo_tex.index),
+                                                     });
+  sd::material_table_sync(&materials);
 
 
   init_arena = arena_release(init_arena);
@@ -894,6 +801,9 @@ int main() {
         }
       }
 
+      //~ Begin frame descriptor state
+      sd::desc::FrameContext fc = sd::desc::begin_frame(&desc_sys, current_frame);
+
       //~ Render state stuff
       debug_line_stream.reset(current_frame);
       Array line_vertices = {
@@ -926,25 +836,20 @@ int main() {
 
       MemoryCopy(arrow_alloc.mapped, current_arrows, sizeof(current_arrows));
 
-      vk::DescriptorBufferInfo arrow_storage_info{
-          .buffer = arrow_alloc.buffer,
-          .offset = arrow_alloc.offset,
-          .range = current_arrows.byte_count(),};
-      vk::WriteDescriptorSet arrow_write{
-          .dstSet = vk_arrow_ds[current_frame],
-          .dstBinding = 0,
-          .dstArrayElement = 0,
-          .descriptorCount = 1,
-          .descriptorType = vk::DescriptorType::eStorageBuffer,
-          .pBufferInfo = &arrow_storage_info,
-      };
-      vk_device.updateDescriptorSets(arrow_write, {});
+      sd::desc::DescriptorSetHandle arrow_set = sd::desc::alloc_draw_set(fc);
+      sd::desc::begin_write(arrow_set)
+          .buffer(sd::desc::DrawBinding::Payload,
+                  arrow_alloc.buffer,
+                  arrow_alloc.offset,
+                  arrow_alloc.size)
+          .commit();
 
 
       ModelPC pc{
           .model = glm::rotate(glm::mat4(1.0f),
                                accumulated_time * glm::radians(90.0f),
                                glm::vec3(0.0f, 0.0f, 1.0f)),
+          .material_id = static_cast<S32>(brick_mat.index),
       };
 
       CameraUBO camera_ubo{
@@ -957,7 +862,7 @@ int main() {
                            10.0f),
       };
       camera_ubo.proj[1][1] *= -1;
-      MemoryCopy(vk_camera_ub_mapped[current_frame], &camera_ubo, sizeof(camera_ubo));
+      sd::desc::upload_globals(fc, camera_ubo);
 
 
       //~ Imgui UI
@@ -1046,12 +951,13 @@ int main() {
       vk_cmd.setScissor(0, vk::Rect2D(vk::Offset2D(0, 0), vk_sc_state.extent));
       vk_cmd.bindVertexBuffers(0, vk_vertex_buffer, {0});
       vk_cmd.bindIndexBuffer(vk_index_buffer, 0, vk::IndexTypeValue<decltype(indices)::value_type>::value);
-      vk_cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics,
-                                mesh_pipe_layout,
-                                0,
-                                {vk_camera_ds[current_frame], vk_mesh_ds[current_frame]},
-                                nullptr);
-      vk_cmd.pushConstants(mesh_pipe_layout, vk::ShaderStageFlagBits::eVertex, 0, sizeof(ModelPC), &pc);
+      sd::cmd::bind_frame_set(vk_cmd, mesh_pipe_layout, fc.frame_set);
+      sd::cmd::bind_material_set(vk_cmd, mesh_pipe_layout, materials.material_set);
+      vk_cmd.pushConstants(mesh_pipe_layout.handle,
+                           vk::ShaderStageFlagBits::eVertex,
+                           0,
+                           static_cast<U32>(offsetof(ModelPC, material_id) + sizeof(S32)),
+                           &pc);
       vk_cmd.drawIndexed(indices.size, 1, 0, 0, 0);
 
 
@@ -1061,20 +967,13 @@ int main() {
                                line_alloc.buffer,
                                {line_alloc.offset
                                });
-      vk_cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics,
-                                line_pipe_layout,
-                                0,
-                                vk_camera_ds[current_frame],
-                                nullptr);
+      sd::cmd::bind_frame_set(vk_cmd, line_pipe_layout, fc.frame_set);
       vk_cmd.draw(line_vertices.size(), 1, 0, 0);
 
       //~ arrows
       vk_cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, vk_arrow_pipeline);
-      vk_cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics,
-                                arrow_pipe_layout,
-                                0,
-                                {vk_camera_ds[current_frame], vk_arrow_ds[current_frame]},
-                                nullptr);
+      sd::cmd::bind_frame_set(vk_cmd, arrow_pipe_layout, fc.frame_set);
+      sd::cmd::bind_draw_set(vk_cmd, arrow_pipe_layout, arrow_set);
       vk_cmd.draw(Arrow::vertex_count_per_arrow(), current_arrows.size(), 0, 0);
 
       vk_cmd.endRendering();

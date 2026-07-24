@@ -149,10 +149,11 @@ internal bool vk_check_validation_layer_support();
 internal U32 vk_find_memory_type(vk::PhysicalDevice vk_phys_dev, U32 type_filter, vk::MemoryPropertyFlags properties);
 
 internal std::pair<vk::Buffer, vk::DeviceMemory> vk_create_buffer(vk::PhysicalDevice vk_phys_dev,
-                                                                  vk::Device vk_device,
-                                                                  vk::DeviceSize size,
-                                                                  vk::BufferUsageFlags usage,
-                                                                  vk::MemoryPropertyFlags properties);
+                                                                   vk::Device vk_device,
+                                                                   vk::DeviceSize size,
+                                                                   vk::BufferUsageFlags usage,
+                                                                   vk::MemoryPropertyFlags properties,
+                                                                   VKArena *arena);
 
 internal void vk_copy_buffer(vk::Device vk_device,
                              vk::CommandPool command_pool,
@@ -173,7 +174,12 @@ internal void vk_create_depth_resources(VKSwapchainConfig *config,
                                         VKArena *arena);
 
 internal std::pair<vk::Buffer, VKGpuArenaAlloc>
-vk_create_buffer(vk::PhysicalDevice, vk::Device, vk::DeviceSize size, vk::BufferUsageFlags usage, VKGpuArena *arena);
+vk_create_buffer(vk::PhysicalDevice vk_phys_dev,
+                 vk::Device vk_device,
+                 vk::DeviceSize size,
+                 vk::BufferUsageFlags usage,
+                 VKGpuArena *gpu_arena,
+                 VKArena *arena);
 internal std::pair<vk::Image, VKGpuArenaAlloc> vk_create_image(vk::PhysicalDevice vk_phys_dev,
                                                                vk::Device vk_device,
                                                                U32 width,
@@ -222,6 +228,7 @@ internal vk::ImageView vk_create_image_view(vk::Device device,
 
 using PhysicalDeviceFeatures = vk::StructureChain<vk::PhysicalDeviceFeatures2,
                                                   vk::PhysicalDeviceVulkan11Features,
+                                                  vk::PhysicalDeviceVulkan12Features,
                                                   vk::PhysicalDeviceVulkan13Features,
                                                   vk::PhysicalDeviceVulkan14Features,
                                                   vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT,
@@ -320,15 +327,6 @@ internal vk::Pipeline create_gpl(vk::Device vk_device,
                                  vk::PipelineCache cache,
                                  vk::GraphicsPipelineLibraryFlagsEXT subset,
                                  vk::GraphicsPipelineCreateInfo ci);
-
-internal vk::DescriptorSetLayout create_descriptor_set_layout(
-    vk::Device device,
-    U32 binding_count,
-    vk::DescriptorSetLayoutBinding const *bindings);
-
-internal vk::PipelineLayout create_pipeline_layout(
-    vk::Device device,
-    vk::DescriptorSetLayout set_layout);
 
 internal vk::Pipeline create_vertex_input_library(
     vk::Device device,

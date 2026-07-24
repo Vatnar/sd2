@@ -497,6 +497,11 @@ internal PhysicalDeviceFeatures enable_phys_dev_features(vk::PhysicalDevice vk_p
   ASSERT_ALWAYS(s_features.get<vk::PhysicalDeviceVulkan13Features>().synchronization2);
   ASSERT_ALWAYS(s_features.get<vk::PhysicalDeviceVulkan13Features>().dynamicRendering);
   ASSERT_ALWAYS(s_features.get<vk::PhysicalDeviceVulkan11Features>().shaderDrawParameters);
+  ASSERT_ALWAYS(s_features.get<vk::PhysicalDeviceVulkan12Features>().descriptorIndexing);
+  ASSERT_ALWAYS(s_features.get<vk::PhysicalDeviceVulkan12Features>().shaderSampledImageArrayNonUniformIndexing);
+  ASSERT_ALWAYS(s_features.get<vk::PhysicalDeviceVulkan12Features>().descriptorBindingPartiallyBound);
+  ASSERT_ALWAYS(s_features.get<vk::PhysicalDeviceVulkan12Features>().descriptorBindingSampledImageUpdateAfterBind);
+  ASSERT_ALWAYS(s_features.get<vk::PhysicalDeviceVulkan12Features>().runtimeDescriptorArray);
   ASSERT_ALWAYS(s_features.get<vk::PhysicalDeviceFeatures2>().features.samplerAnisotropy);
   ASSERT_ALWAYS(s_features.get<vk::PhysicalDeviceFeatures2>().features.wideLines);
   ASSERT_ALWAYS(s_features.get<vk::PhysicalDeviceExtendedDynamicStateFeaturesEXT>().extendedDynamicState);
@@ -506,6 +511,11 @@ internal PhysicalDeviceFeatures enable_phys_dev_features(vk::PhysicalDevice vk_p
   e_features.get<vk::PhysicalDeviceVulkan13Features>().synchronization2 = vk::True;
   e_features.get<vk::PhysicalDeviceVulkan13Features>().dynamicRendering = vk::True;
   e_features.get<vk::PhysicalDeviceVulkan11Features>().shaderDrawParameters = vk::True;
+  e_features.get<vk::PhysicalDeviceVulkan12Features>().descriptorIndexing = vk::True;
+  e_features.get<vk::PhysicalDeviceVulkan12Features>().shaderSampledImageArrayNonUniformIndexing = vk::True;
+  e_features.get<vk::PhysicalDeviceVulkan12Features>().descriptorBindingPartiallyBound = vk::True;
+  e_features.get<vk::PhysicalDeviceVulkan12Features>().descriptorBindingSampledImageUpdateAfterBind = vk::True;
+  e_features.get<vk::PhysicalDeviceVulkan12Features>().runtimeDescriptorArray = vk::True;
   e_features.get<vk::PhysicalDeviceFeatures2>().features.samplerAnisotropy = vk::True;
   e_features.get<vk::PhysicalDeviceFeatures2>().features.sampleRateShading = vk::True;
   e_features.get<vk::PhysicalDeviceFeatures2>().features.wideLines = vk::True;
@@ -982,26 +992,7 @@ internal vk::Pipeline create_gpl(vk::Device vk_device,
   return pipe;
 }
 
-internal vk::DescriptorSetLayout create_descriptor_set_layout(
-    vk::Device device,
-    VKArena *arena,
-    ArraySlice<vk::DescriptorSetLayoutBinding> bindings) {
-  vk::DescriptorSetLayoutCreateInfo ci{.bindingCount = static_cast<U32>(bindings.length), .pBindings = bindings};
-  return arena->ds.push(vk_abort_if_error(device.createDescriptorSetLayoutUnique(ci)));
-}
 
-internal vk::PipelineLayout create_pipeline_layout(
-    vk::Device device,
-    VKArena *arena,
-    ArraySlice<vk::DescriptorSetLayout> descriptor_set_layouts,
-    ArraySlice<vk::PushConstantRange> push_constant_ranges
-    ) {
-  vk::PipelineLayoutCreateInfo ci{.setLayoutCount = static_cast<U32>(descriptor_set_layouts.length),
-                                  .pSetLayouts = descriptor_set_layouts,
-                                  .pushConstantRangeCount = static_cast<U32>(push_constant_ranges.length),
-                                  .pPushConstantRanges = push_constant_ranges};
-  return arena->ds.push(vk_abort_if_error(device.createPipelineLayoutUnique(ci)));
-}
 
 internal vk::Pipeline create_vertex_input_library(
     vk::Device device,

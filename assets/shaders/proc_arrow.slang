@@ -67,4 +67,3 @@ struct Arrow {
      }
      return arrow.color - 2*distance(input.local, float2(0,0));
  }
-

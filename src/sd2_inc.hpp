@@ -38,3 +38,8 @@
 #include "internal/base_string.hpp"
 #include "internal/vk_destructor_stack.hpp"
 #include "internal/vk_arena.hpp"
+#include "internal/descriptor_schema.hpp"
+#include "internal/descriptor_arena.hpp"
+#include "internal/descriptor_writer.hpp"
+#include "internal/material_table.hpp"
+#include "internal/vk_descriptor_cmd.hpp"

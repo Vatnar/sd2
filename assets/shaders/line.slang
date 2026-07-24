@@ -12,7 +12,8 @@ struct UniformBuffer {
     float4x4 view;
     float4x4 proj;
 };
-ConstantBuffer<UniformBuffer> ubo;
+
+[[vk::binding(0, 0)]] ConstantBuffer<UniformBuffer> ubo;
 
 [shader("vertex")]
 LineVSOutput vert_main(LineVSInput input) {

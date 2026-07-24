@@ -38,18 +38,23 @@ static DebugCtx g_dbg_ctx{};
 struct LineVertex {
   glm::vec3 pos;
   glm::vec4 color;
+
+  static constexpr Array<vk::VertexInputBindingDescription, 1> binding_descriptions() {
+    return {
+        vk::VertexInputBindingDescription{.binding = 0, .stride = sizeof(LineVertex),
+                                          .inputRate = vk::VertexInputRate::eVertex},
+    };
+  }
+
+  static constexpr Array<vk::VertexInputAttributeDescription, 2> attribute_descriptions() {
+    return {
+        vk::VertexInputAttributeDescription{.location = 0, .binding = 0, .format = vk::Format::eR32G32B32Sfloat,
+                                            .offset = offsetof(LineVertex, pos)},
+        vk::VertexInputAttributeDescription{.location = 1, .binding = 0, .format = vk::Format::eR32G32B32A32Sfloat,
+                                            .offset = offsetof(LineVertex, color)}
+    };
+  }
 };
-
-Array<vk::VertexInputBindingDescription, 1> line_vertex_binding_descriptions{{
-    {.binding = 0, .stride = sizeof(LineVertex), .inputRate = vk::VertexInputRate::eVertex},
-}};
-
-Array<vk::VertexInputAttributeDescription, 2> line_vertex_attribute_descriptions{{
-    vk::VertexInputAttributeDescription{.location = 0, .binding = 0, .format = vk::Format::eR32G32B32Sfloat,
-                                        .offset = offsetof(LineVertex, pos)},
-    vk::VertexInputAttributeDescription{.location = 1, .binding = 0, .format = vk::Format::eR32G32B32A32Sfloat,
-                                        .offset = offsetof(LineVertex, color)},
-}};
 
 enum class ArrowFlags : U32 {
   NONE = 0 << 0,
@@ -57,41 +62,27 @@ enum class ArrowFlags : U32 {
 };
 
 struct Arrow {
-  glm::vec3 origin;
-  glm::vec3 direction;
+  alignas(16) glm::vec3 origin;
+  alignas(16) glm::vec3 direction;
   F32 magnitude;
   F32 width;
   F32 roundness;
-  glm::vec4 color;
+  alignas(16) glm::vec4 color;
   U32 flags;
 
   static constexpr U64 vertex_count_per_arrow() {
     return 6; // draw quad which we fill in fragment
   }
 
-  static constexpr Array<vk::VertexInputBindingDescription, 1> get_binding_descriptions() {
+  static constexpr Array<vk::DescriptorSetLayoutBinding, 1> get_dsl_bindings() {
     return {
-        vk::VertexInputBindingDescription{.binding = 0, .stride = sizeof(Arrow),
-                                          .inputRate = vk::VertexInputRate::eInstance}
-    };
-  }
 
-  static constexpr Array<vk::VertexInputAttributeDescription, 7> get_attribute_descriptions() {
-    return {
-        vk::VertexInputAttributeDescription{.location = 0, .binding = 0, .format = vk::Format::eR32G32B32Sfloat,
-                                            .offset = offsetof(Arrow, origin)},
-        vk::VertexInputAttributeDescription{.location = 1, .binding = 0, .format = vk::Format::eR32Sfloat,
-                                            .offset = offsetof(Arrow, magnitude)},
-        vk::VertexInputAttributeDescription{.location = 2, .binding = 0, .format = vk::Format::eR32G32B32Sfloat,
-                                            .offset = offsetof(Arrow, direction)},
-        vk::VertexInputAttributeDescription{.location = 3, .binding = 0, .format = vk::Format::eR32Sfloat,
-                                            .offset = offsetof(Arrow, width)},
-        vk::VertexInputAttributeDescription{.location = 4, .binding = 0, .format = vk::Format::eR32G32B32A32Sfloat,
-                                            .offset = offsetof(Arrow, color)},
-        vk::VertexInputAttributeDescription{.location = 5, .binding = 0, .format = vk::Format::eR32Sfloat,
-                                            .offset = offsetof(Arrow, roundness)},
-        vk::VertexInputAttributeDescription{.location = 6, .binding = 0, .format = vk::Format::eR32Uint,
-                                            .offset = offsetof(Arrow, flags)},
+        vk::DescriptorSetLayoutBinding{
+            .binding = 0,
+            .descriptorType = vk::DescriptorType::eStorageBuffer,
+            .descriptorCount = 1,
+            .stageFlags = vk::ShaderStageFlagBits::eVertex
+        }
     };
   }
 };
@@ -104,6 +95,30 @@ struct TextureVertex {
   bool operator==(TextureVertex const &other) const {
     return pos == other.pos && color == other.color && tex_coord == other.tex_coord;
   }
+
+  static constexpr Array<vk::VertexInputBindingDescription, 1> binding_descriptions() {
+    return {
+        vk::VertexInputBindingDescription{.binding = 0, .stride = sizeof(TextureVertex),
+                                          .inputRate = vk::VertexInputRate::eVertex}
+    };
+  }
+
+  static constexpr Array<vk::VertexInputAttributeDescription, 3> attribute_descriptions() {
+    return {
+        vk::VertexInputAttributeDescription{.location = 0,
+                                            .binding = 0,
+                                            .format = vk::Format::eR32G32B32Sfloat,
+                                            .offset = offsetof(TextureVertex, pos)},
+        vk::VertexInputAttributeDescription{.location = 1,
+                                            .binding = 0,
+                                            .format = vk::Format::eR32G32B32Sfloat,
+                                            .offset = offsetof(TextureVertex, color)},
+        vk::VertexInputAttributeDescription{.location = 2,
+                                            .binding = 0,
+                                            .format = vk::Format::eR32G32Sfloat,
+                                            .offset = offsetof(TextureVertex, tex_coord)}
+    };
+  }
 };
 
 template<>
@@ -114,31 +129,22 @@ struct std::hash<TextureVertex> {
   }
 };
 
-
-Array<vk::VertexInputBindingDescription, 1> texture_vertex_binding_descriptions{{
-    vk::VertexInputBindingDescription{.binding = 0, .stride = sizeof(TextureVertex),
-                                      .inputRate = vk::VertexInputRate::eVertex},
-}};
-
-Array<vk::VertexInputAttributeDescription, 3> texture_vertex_attribute_descriptions{{
-    vk::VertexInputAttributeDescription{.location = 0,
-                                        .binding = 0,
-                                        .format = vk::Format::eR32G32B32Sfloat,
-                                        .offset = offsetof(TextureVertex, pos)},
-    vk::VertexInputAttributeDescription{.location = 1,
-                                        .binding = 0,
-                                        .format = vk::Format::eR32G32B32Sfloat,
-                                        .offset = offsetof(TextureVertex, color)},
-    vk::VertexInputAttributeDescription{.location = 2,
-                                        .binding = 0,
-                                        .format = vk::Format::eR32G32Sfloat,
-                                        .offset = offsetof(TextureVertex, tex_coord)},
-}};
-
-struct UniformBufferObject {
+struct ModelPC {
   alignas(16) glm::mat4 model;
+};
+
+struct CameraUBO {
   alignas(16) glm::mat4 view;
   alignas(16) glm::mat4 proj;
+
+  static constexpr Array<vk::DescriptorSetLayoutBinding, 1> get_dsl_bindings() {
+    return {
+        vk::DescriptorSetLayoutBinding{.binding = 0,
+                                       .descriptorType = vk::DescriptorType::eUniformBuffer,
+                                       .descriptorCount = 1,
+                                       .stageFlags = vk::ShaderStageFlagBits::eVertex}
+    };
+  }
 };
 
 constexpr uint32_t WIDTH = 800;
@@ -326,54 +332,54 @@ int main() {
       &vk_sc_state,
       &vk_sc_config.swapchain_pool[0].sc_res_arena);
 
-  Array ubo_and_sampler_bindings{
-
-      vk::DescriptorSetLayoutBinding{.binding = 0,
-                                     .descriptorType = vk::DescriptorType::eUniformBuffer,
-                                     .descriptorCount = 1,
-                                     .stageFlags = vk::ShaderStageFlagBits::eVertex},
-      vk::DescriptorSetLayoutBinding{.binding = 1,
-                                     .descriptorType = vk::DescriptorType::eCombinedImageSampler,
-                                     .descriptorCount = 1,
-                                     .stageFlags = vk::ShaderStageFlagBits::eFragment}
-  };
-  // Array arrow_bindings{
-  // vk::DescriptorSetLayoutBinding{.binding = 0, .descriptorType = vk::DescriptorType::eStorageBuffer,
-  // .descriptorCount = 1, .stageFlags = vk::ShaderStageFlagBits::eVertex},
-  // vk::DescriptorSetLayoutBinding{.binding = 1,
-  // .descriptorType = vk::DescriptorType::eUniformBuffer,
-  // .descriptorCount = 1,
-  // .stageFlags = vk::ShaderStageFlagBits::eVertex},
-  // };
-
-  vk::DescriptorSetLayout vk_ubo_and_sampler = create_descriptor_set_layout(
+  vk::DescriptorSetLayout camera_dsl = create_descriptor_set_layout(
       vk_device,
       &app_arena,
-      ubo_and_sampler_bindings.to_slice());
+      CameraUBO::get_dsl_bindings().to_slice()
+      );
 
-  vk::PipelineLayout vk_ubo_and_sampler_layout = create_pipeline_layout(
+  vk::DescriptorSetLayout mesh_dsl = create_descriptor_set_layout(
       vk_device,
       &app_arena,
-      make_slice(vk_ubo_and_sampler),
+      Array{
+          vk::DescriptorSetLayoutBinding{.binding = 0,
+                                         .descriptorType = vk::DescriptorType::eCombinedImageSampler,
+                                         .descriptorCount = 1,
+                                         .stageFlags = vk::ShaderStageFlagBits::eFragment},
+      }.to_slice()
+      );
+  vk::DescriptorSetLayout arrow_dsl = create_descriptor_set_layout(
+      vk_device,
+      &app_arena,
+      Arrow::get_dsl_bindings().to_slice());
+
+  vk::PushConstantRange mesh_pc{.stageFlags = vk::ShaderStageFlagBits::eVertex, .offset = 0, .size = sizeof(ModelPC)};
+
+  vk::PipelineLayout mesh_pipe_layout = create_pipeline_layout(
+      vk_device,
+      &app_arena,
+      Array{camera_dsl, mesh_dsl}.to_slice(),
+      make_slice(mesh_pc));
+
+  vk::PipelineLayout line_pipe_layout = create_pipeline_layout(
+      vk_device,
+      &app_arena,
+      make_slice(camera_dsl),
       {});
-  // vk::DescriptorSetLayout arrow_dsl = create_descriptor_set_layout(
-  // vk_device,
-  // &app_arena,
-  // arrow_bindings.to_slice());
 
-  // vk::PipelineLayout arrow_layout = create_pipeline_layout(vk_device,
-  // &app_arena,
-  // make_slice(arrow_dsl),
-  // {});
+  vk::PipelineLayout arrow_pipe_layout = create_pipeline_layout(vk_device,
+                                                                &app_arena,
+                                                                Array{camera_dsl, arrow_dsl}.to_slice(),
+                                                                {});
 
 
   //~ Graphics Pipeline Libraries (GPL)
-  vk::Pipeline vk_output_lib{};
+  vk::Pipeline pipe_msaa_enabled_out{};
   vk::Pipeline vk_model_a{}, vk_model_b{}, vk_model_c{};
-  vk::Pipeline vk_line_a{}, vk_line_b{}, vk_line_c{};
+  vk::Pipeline pipe_line_input{}, pipe_line_vert{}, pipe_line_frag{};
   vk::Pipeline vk_line_pipeline{};
-  // vk::Pipeline vk_arrow_a{}, vk_arrow_b{}, vk_arrow_c{};
-  // vk::Pipeline vk_arrow_pipeline{};
+  vk::Pipeline pipe_no_vert_input{}, pipe_arrow_vertex{}, pipe_arrow_frag{};
+  vk::Pipeline vk_arrow_pipeline{};
   vk::Pipeline vk_graphics_pipeline{};
 
   {
@@ -382,6 +388,7 @@ int main() {
 
     vk::ShaderModule mesh_mod = load_shader_module(vk_device, vk_scratch, str8_lit("assets/shaders/shader.spv"));
 
+    //~ Shaders
     vk::PipelineShaderStageCreateInfo mesh_vert{
         .stage = vk::ShaderStageFlagBits::eVertex,
         .module = mesh_mod,
@@ -403,133 +410,119 @@ int main() {
         .module = line_mod,
         .pName = "frag_main",
     };
-    // vk::ShaderModule arrow_mod = load_shader_module(vk_device, vk_scratch, str8_lit("assets/shaders/proc_arrow.spv"));
-    // vk_device,
-    // str8_lit("assets/shaders/proc_arrow.spv"),
-    // str8_lit("vert_main"),
-    // str8_lit("frag_main"));
-
-    FragmentOutputLibDesc desc_d{
-        .msaa_samples = vk_sc_config.msaa_samples,
-        .color_format = vk_sc_config.image_format,
-        .depth_format = vk_sc_state.depth.format,
+    vk::ShaderModule arrow_mod = load_shader_module(vk_device, vk_scratch, str8_lit("assets/shaders/proc_arrow.spv"));
+    vk::PipelineShaderStageCreateInfo arrow_vert{
+        .stage = vk::ShaderStageFlagBits::eVertex,
+        .module = arrow_mod,
+        .pName = "vert_main"
     };
-    vk_output_lib = create_fragment_output_library(vk_device,
-                                                   &app_arena,
-                                                   desc_d);
-
-    VertexInputLibDesc desc_a{
-        .bindings = texture_vertex_binding_descriptions.to_slice(),
-        .attributes = texture_vertex_attribute_descriptions.to_slice(),
-        .topology = vk::PrimitiveTopology::eTriangleList,
+    vk::PipelineShaderStageCreateInfo arrow_frag{
+        .stage = vk::ShaderStageFlagBits::eFragment,
+        .module = arrow_mod,
+        .pName = "frag_main"
     };
+
+    //~ Pipelines
+    pipe_msaa_enabled_out = create_fragment_output_library(vk_device,
+                                                           &app_arena,
+                                                           {
+                                                               .msaa_samples = vk_sc_config.msaa_samples,
+                                                               .color_format = vk_sc_config.image_format,
+                                                               .depth_format = vk_sc_state.depth.format,
+                                                           });
+
     vk_model_a = create_vertex_input_library(vk_device,
                                              &app_arena,
-                                             desc_a);
+                                             {
+                                                 .bindings = TextureVertex::binding_descriptions().to_slice(),
+                                                 .attributes = TextureVertex::attribute_descriptions().to_slice(),
+                                                 .topology = vk::PrimitiveTopology::eTriangleList,
+                                             });
 
-    //--- Model pipeline: B (Pre-Rasterization Shaders) ---
     vk_model_b = create_pre_raster_library(vk_device,
                                            &app_arena,
-                                           vk_ubo_and_sampler_layout,
+                                           mesh_pipe_layout,
                                            PreRasterLibDesc{.shader_stages = make_slice(mesh_vert)});
 
-    //--- Model pipeline: C (Fragment Shader) ---
     vk_model_c = create_fragment_library(vk_device,
                                          &app_arena,
-                                         vk_ubo_and_sampler_layout,
+                                         mesh_pipe_layout,
                                          FragmentLibDesc{.fragment_shader = &mesh_frag,
                                                          .msaa_samples = vk_sc_config.msaa_samples,
                                                          .sample_shading_enable = vk::True,
                                                          .min_sample_shading = 0.2f});
 
     //--- Model pipeline: Link ---
-    PROFILE_START("pipeline_creation");
-    Array model_libs = {vk_model_a, vk_model_b, vk_model_c, vk_output_lib};
     vk_graphics_pipeline = create_linked_pipeline(
         vk_device,
         &app_arena,
-        vk_ubo_and_sampler_layout,
-        model_libs.to_slice(),
+        mesh_pipe_layout,
+        Array{vk_model_a, vk_model_b, vk_model_c, pipe_msaa_enabled_out}.to_slice(),
         vk_sc_config.image_format,
         vk_sc_state.depth.format);
-    U64 pipe_cycles = PROFILE_END();
-    printf("Model pipeline creation: %lu cycles\n", pipe_cycles);
 
     //--- Line pipeline: A (LineVertex, line list) ---
-    VertexInputLibDesc line_desc_a{
-        .bindings = line_vertex_binding_descriptions.to_slice(),
-        .attributes = line_vertex_attribute_descriptions.to_slice(),
-        .topology = vk::PrimitiveTopology::eLineList,
-    };
-    vk_line_a = create_vertex_input_library(vk_device,
-                                            &app_arena,
-                                            line_desc_a);
+    pipe_line_input = create_vertex_input_library(vk_device,
+                                                  &app_arena,
+                                                  {
+                                                      .bindings = LineVertex::binding_descriptions().to_slice(),
+                                                      .attributes = LineVertex::attribute_descriptions().to_slice(),
+                                                      .topology = vk::PrimitiveTopology::eLineList,
+                                                  }
+        );
 
-    //--- Line pipeline: B (Pre-Rasterization Shaders) ---
-    vk::DynamicState line_states[] = {vk::DynamicState::eViewport, vk::DynamicState::eScissor,
-                                      vk::DynamicState::eLineWidth};
-    vk_line_b = create_pre_raster_library(vk_device,
+    pipe_line_vert = create_pre_raster_library(vk_device,
+                                               &app_arena,
+                                               line_pipe_layout,
+                                               PreRasterLibDesc{.shader_stages = make_slice(line_vert),
+                                                                .line_width = 5.0f,
+                                                                .dynamic_states = Array{
+                                                                    vk::DynamicState::eViewport,
+                                                                    vk::DynamicState::eScissor,
+                                                                    vk::DynamicState::eLineWidth}.to_slice(),
+                                                                .dynamic_state_count = 3});
 
-                                          &app_arena,
-                                          vk_ubo_and_sampler_layout,
-                                          PreRasterLibDesc{.shader_stages = make_slice(line_vert),
-                                                           .line_width = 5.0f,
-                                                           .dynamic_states = line_states, .dynamic_state_count = 3});
+    pipe_line_frag = create_fragment_library(vk_device,
+                                             &app_arena,
+                                             line_pipe_layout,
+                                             FragmentLibDesc{.fragment_shader = &line_frag,
+                                                             .msaa_samples = vk_sc_config.msaa_samples,
+                                                             .sample_shading_enable = vk::True,
+                                                             .min_sample_shading = 0.2f});
 
-    //--- Line pipeline: C (Fragment Shader) ---
-    vk_line_c = create_fragment_library(vk_device,
-                                        &app_arena,
-                                        vk_ubo_and_sampler_layout,
-                                        FragmentLibDesc{.fragment_shader = &line_frag,
-                                                        .msaa_samples = vk_sc_config.msaa_samples,
-                                                        .sample_shading_enable = vk::True,
-                                                        .min_sample_shading = 0.2f});
-
-    //--- Line pipeline: Link ---
-    Array line_libs = {vk_line_a, vk_line_b, vk_line_c, vk_output_lib};
     vk_line_pipeline = create_linked_pipeline(
         vk_device,
         &app_arena,
-        vk_ubo_and_sampler_layout,
-        line_libs.to_slice(),
+        line_pipe_layout,
+        Array{pipe_line_input, pipe_line_vert, pipe_line_frag, pipe_msaa_enabled_out}.to_slice(),
         vk_sc_config.image_format,
         vk_sc_state.depth.format);
 
-    //--- Arrow pipeline: A (Arrow vertex input) ---
-    // VertexInputLibDesc arrow_desc_a{
-    // .bindings = Arrow::get_binding_descriptions().to_slice(),
-    // .attributes = Arrow::get_attribute_descriptions().to_slice(),
-  };
-  // vk_arrow_a = create_vertex_input_library(vk_device,
-  // &app_arena,
-  // arrow_desc_a);
+    pipe_no_vert_input = create_vertex_input_library(vk_device,
+                                                     &app_arena,
+                                                     {});
 
-  //--- Arrow pipeline: B (Pre-Rasterization Shaders) ---
-  // vk_arrow_b = create_pre_raster_library(vk_device,
-  // &app_arena,
-  // arrow_layout,
-  // PreRasterLibDesc{.shader_stages = make_slice(arrow_vert)});
+    pipe_arrow_vertex = create_pre_raster_library(vk_device,
+                                                  &app_arena,
+                                                  arrow_pipe_layout,
+                                                  PreRasterLibDesc{.shader_stages = make_slice(arrow_vert)});
 
-  //--- Arrow pipeline: C (Fragment Shader) ---
-  // vk_arrow_c = create_fragment_library(vk_device,
-  // &app_arena,
-  // arrow_layout,
-  // FragmentLibDesc{.fragment_shader = &arrow_frag,
-  // .msaa_samples = vk_sc_config.msaa_samples,
-  // .sample_shading_enable = true,
-  // .min_sample_shading = 0.2f});
+    pipe_arrow_frag = create_fragment_library(vk_device,
+                                              &app_arena,
+                                              arrow_pipe_layout,
+                                              FragmentLibDesc{.fragment_shader = &arrow_frag,
+                                                              .msaa_samples = vk_sc_config.msaa_samples,
+                                                              .sample_shading_enable = true,
+                                                              .min_sample_shading = 0.2f});
 
-  //--- Arrow pipeline: Link ---
-  // vk::Pipeline arrow_libs[] = {vk_arrow_a, vk_arrow_b, vk_arrow_c, vk_output_lib};
-  // vk_arrow_pipeline = create_linked_pipeline(
-  // vk_device,
-  // &app_arena,
-  // arrow_layout,
-  // 4,
-  // arrow_libs,
-  // vk_sc_config.image_format,
-  // vk_sc_state.depth.format);
-  // }
+    vk_arrow_pipeline = create_linked_pipeline(
+        vk_device,
+        &app_arena,
+        arrow_pipe_layout,
+        Array{pipe_no_vert_input, pipe_arrow_vertex, pipe_arrow_frag, pipe_msaa_enabled_out}.to_slice(),
+        vk_sc_config.image_format,
+        vk_sc_state.depth.format);
+  }
 
   //~ Load model
   auto [vertices, indices] = load_obj(app_arena, MODEL_PATH);
@@ -624,91 +617,117 @@ int main() {
                                                                  kb(64),
                                                                  vk::BufferUsageFlagBits::eVertexBuffer);
 
-  // TransientBuffer arrows = vk_create_transient_buffer(vk_phys_dev,
-  // vk_device,
-  // &vk_host_arena,
-  // &app_arena,
-  // kb(64),
-  // vk::BufferUsageFlagBits::eVertexBuffer |
-  // vk::BufferUsageFlagBits::eStorageBuffer);
+  TransientBuffer arrows = vk_create_transient_buffer(vk_phys_dev,
+                                                      vk_device,
+                                                      &vk_host_arena,
+                                                      &app_arena,
+                                                      kb(64),
+                                                      vk::BufferUsageFlagBits::eStorageBuffer);
 
   // TODO: extract to create_uniform_descriptors(device, phys_dev, host_arena, tex_sampler, tex_image, ...) ->
   // {uniform_buffers, descriptor_pool, descriptor_sets, uniform_buffers_mapped}
   //~ Uniform Buffers + Descriptors
-  Array<vk::Buffer, MAX_FRAMES_IN_FLIGHT> vk_uniform_buffers{};
-  Array<void *, MAX_FRAMES_IN_FLIGHT> vk_uniform_buffers_mapped{};
+  Array<vk::Buffer, MAX_FRAMES_IN_FLIGHT> vk_camera_ub{};
+  Array<void *, MAX_FRAMES_IN_FLIGHT> vk_camera_ub_mapped{};
+
   vk::DescriptorPool vk_descriptor_pool{};
 
-  Array<vk::DescriptorSet, MAX_FRAMES_IN_FLIGHT> vk_descriptor_sets{};
-
-  // Array<vk::DescriptorSet, MAX_FRAMES_IN_FLIGHT> arrow_descriptor_sets{};
+  Array<vk::DescriptorSet, MAX_FRAMES_IN_FLIGHT> vk_camera_ds{};
+  Array<vk::DescriptorSet, MAX_FRAMES_IN_FLIGHT> vk_mesh_ds{};
+  Array<vk::DescriptorSet, MAX_FRAMES_IN_FLIGHT> vk_arrow_ds{};
   {
     for (U64 i = 0; i < MAX_FRAMES_IN_FLIGHT; ++i) {
-      vk::DeviceSize buffer_size = sizeof(UniformBufferObject);
-      auto [ub, ub_alloc] =
-          vk_create_buffer(vk_phys_dev,
-                           vk_device,
-                           buffer_size,
-                           vk::BufferUsageFlagBits::eUniformBuffer,
-                           &vk_host_arena,
-                           &app_arena);
-      vk_uniform_buffers[i] = ub;
-      vk_uniform_buffers_mapped[i] = ub_alloc.mapped;
+      vk::DeviceSize buffer_size = sizeof(CameraUBO);
+      auto [ub, ub_alloc] = vk_create_buffer(vk_phys_dev,
+                                             vk_device,
+                                             buffer_size,
+                                             vk::BufferUsageFlagBits::eUniformBuffer,
+                                             &vk_host_arena,
+                                             &app_arena);
+      vk_camera_ub[i] = ub;
+      vk_camera_ub_mapped[i] = ub_alloc.mapped;
     }
 
-    Array pool_size{
+    // TODO: Replace with one persistently mapped per-frame/ ring buffer
+    Array pool_sizes{
         vk::DescriptorPoolSize{.type = vk::DescriptorType::eUniformBuffer, .descriptorCount = MAX_FRAMES_IN_FLIGHT},
         vk::DescriptorPoolSize{.type = vk::DescriptorType::eCombinedImageSampler,
                                .descriptorCount = MAX_FRAMES_IN_FLIGHT},
-        vk::DescriptorPoolSize{.type = vk::DescriptorType::eStorageBuffer, .descriptorCount = MAX_FRAMES_IN_FLIGHT}
+        vk::DescriptorPoolSize{.type = vk::DescriptorType::eStorageBuffer, .descriptorCount = MAX_FRAMES_IN_FLIGHT},
     };
-    vk::DescriptorPoolCreateInfo dpci{.flags = vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet,
-                                      .maxSets = 2 * MAX_FRAMES_IN_FLIGHT,
-                                      .poolSizeCount = pool_size.size(),
-                                      .pPoolSizes = pool_size};
-    vk_descriptor_pool = app_arena.ds.push(vk_abort_if_error(vk_device.createDescriptorPoolUnique(dpci)));
 
-    Array<vk::DescriptorSetLayout, MAX_FRAMES_IN_FLIGHT> ubo_and_sample_layouts{};
-    fill_array(ubo_and_sample_layouts, vk_ubo_and_sampler);
-
-    vk::DescriptorSetAllocateInfo alloc_info{.descriptorPool = vk_descriptor_pool,
-                                             .descriptorSetCount = ubo_and_sample_layouts.size(),
-                                             .pSetLayouts = ubo_and_sample_layouts};
-    vk_abort_if_error(vk_device.allocateDescriptorSets(&alloc_info, vk_descriptor_sets));
-
-    // Array<vk::DescriptorSetLayout, MAX_FRAMES_IN_FLIGHT> arrow_layouts{};
-    // fill_array(arrow_layouts, arrow_dsl);
-    // vk::DescriptorSetAllocateInfo arrow_alloc_info{
-    // .descriptorPool = vk_descriptor_pool,
-    // .descriptorSetCount = arrow_layouts.size(),
-    // .pSetLayouts = arrow_layouts
-    // };
-    // vk_abort_if_error(vk_device.allocateDescriptorSets(&arrow_alloc_info, arrow_descriptor_sets));
-
-    for (U64 i = 0; i < MAX_FRAMES_IN_FLIGHT; i++) {
-      vk::DescriptorBufferInfo buffer_info{.buffer = vk_uniform_buffers[i],
-                                           .offset = 0,
-                                           .range = sizeof(UniformBufferObject)};
-      vk::DescriptorImageInfo image_info{.sampler = vk_sampler,
-                                         .imageView = vk_tex.image_view,
-                                         .imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal};
-      Array descriptor_writes{
-          vk::WriteDescriptorSet{.dstSet = vk_descriptor_sets[i],
-                                 .dstBinding = 0,
-                                 .dstArrayElement = 0,
-                                 .descriptorCount = 1,
-                                 .descriptorType = vk::DescriptorType::eUniformBuffer,
-                                 .pBufferInfo = &buffer_info},
-          vk::WriteDescriptorSet{.dstSet = vk_descriptor_sets[i],
-                                 .dstBinding = 1,
-                                 .dstArrayElement = 0,
-                                 .descriptorCount = 1,
-                                 .descriptorType = vk::DescriptorType::eCombinedImageSampler,
-                                 .pImageInfo = &image_info}
+    vk::DescriptorPoolCreateInfo dpci{
+        .flags = vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet,
+        .maxSets = 3 * MAX_FRAMES_IN_FLIGHT,
+        .poolSizeCount = pool_sizes.size(),
+        .pPoolSizes = pool_sizes
+    };
+    vk_descriptor_pool = app_arena.ds.push(vk_abort_if_error(vk_device.createDescriptorPoolUnique(dpci)));;
+    {
+      Array<vk::DescriptorSetLayout, MAX_FRAMES_IN_FLIGHT> layouts{};
+      fill_array(layouts, camera_dsl);
+      vk::DescriptorSetAllocateInfo alloc_info{
+          .descriptorPool = vk_descriptor_pool,
+          .descriptorSetCount = layouts.size(),
+          .pSetLayouts = layouts
       };
+      vk_abort_if_error(vk_device.allocateDescriptorSets(&alloc_info, vk_camera_ds));
+    }
+    {
+      Array<vk::DescriptorSetLayout, MAX_FRAMES_IN_FLIGHT> layouts{};
+      fill_array(layouts, mesh_dsl);
+      vk::DescriptorSetAllocateInfo alloc_info{
+          .descriptorPool = vk_descriptor_pool,
+          .descriptorSetCount = layouts.size(),
+          .pSetLayouts = layouts
+      };
+      vk_abort_if_error(vk_device.allocateDescriptorSets(&alloc_info, vk_mesh_ds));
+    }
+    {
+      Array<vk::DescriptorSetLayout, MAX_FRAMES_IN_FLIGHT> layouts{};
+      fill_array(layouts, arrow_dsl);
+      vk::DescriptorSetAllocateInfo alloc_info{
+          .descriptorPool = vk_descriptor_pool,
+          .descriptorSetCount = layouts.size(),
+          .pSetLayouts = layouts
+      };
+      vk_abort_if_error(vk_device.allocateDescriptorSets(&alloc_info, vk_arrow_ds));
+    }
+
+    for (U64 i = 0; i < MAX_FRAMES_IN_FLIGHT; ++i) {
+      vk::DescriptorBufferInfo camera_buffer_info{
+          .buffer = vk_camera_ub[i],
+          .offset = 0,
+          .range = sizeof(CameraUBO)
+      };
+      vk::WriteDescriptorSet camera_write{
+          .dstSet = vk_camera_ds[i],
+          .dstBinding = 0,
+          .dstArrayElement = 0,
+          .descriptorCount = 1,
+          .descriptorType = vk::DescriptorType::eUniformBuffer,
+          .pBufferInfo = &camera_buffer_info,
+      };
+
+      vk::DescriptorImageInfo image_info{
+          .sampler = vk_sampler,
+          .imageView = vk_tex.image_view,
+          .imageLayout = vk::ImageLayout::eShaderReadOnlyOptimal,
+      };
+      vk::WriteDescriptorSet mesh_write{
+          .dstSet = vk_mesh_ds[i],
+          .dstBinding = 0,
+          .dstArrayElement = 0,
+          .descriptorCount = 1,
+          .descriptorType = vk::DescriptorType::eCombinedImageSampler,
+          .pImageInfo = &image_info,
+      };
+
+      Array descriptor_writes{camera_write, mesh_write};
       vk_device.updateDescriptorSets(descriptor_writes.data, {});
     }
   }
+
 
   init_arena = arena_release(init_arena);
 
@@ -893,27 +912,42 @@ int main() {
       MemoryCopy(line_alloc.mapped, line_vertices, sizeof(line_vertices));
 
       // procedural arrows :)
-      // arrows.reset(current_frame);
-      // Array current_arrows = {
-      // Arrow{.origin = {1.0f, 1.0f, 1.0f}, .direction = {1.0f, 0.0f, 0.0f}, .magnitude = 5.0f, .width = 5.0f,
-      // .roundness = 5.0f, .color = {1.0f, 0.0f, 0.0f, 1.0f}, .flags = 0}
-      // };
-      // TransientAlloc arrow_alloc = arrows.alloc(
-      // current_frame,
-      // current_arrows.byte_count(),
-      // alignof(Arrow));
-      // vk::DescriptorBufferInfo arrow_storage_info{
-      // .buffer = arrow_alloc.buffer,
-      // .offset = arrow_alloc.offset,
-      // .range = current_arrows.byte_count(),};
+      arrows.reset(current_frame);
+      Array current_arrows = {
+          Arrow{.origin = {1.0f, 1.0f, 1.0f}, .direction = {1.0f, 0.0f, 0.0f}, .magnitude = 1.0f, .width = 0.5f,
+                .roundness = 5.0f, .color = {1.0f, 0.0f, 0.0f, 1.0f}, .flags = 0},
+          Arrow{.origin = {1.0f, -1.0f, 1.0f}, .direction = {1.0f, 1.0f, 0.0f}, .magnitude = 1.0f, .width = 1.0f,
+                .roundness = 5.0f, .color = {0.0f, 1.0f, 0.0f, 1.0f}, .flags = 0}
+      };
+      TransientAlloc arrow_alloc = arrows.alloc(
+          current_frame,
+          current_arrows.byte_count(),
+          alignof(Arrow));
 
-      // MemoryCopy(arrow_alloc.mapped, current_arrows, sizeof(current_arrows));
+      MemoryCopy(arrow_alloc.mapped, current_arrows, sizeof(current_arrows));
+
+      vk::DescriptorBufferInfo arrow_storage_info{
+          .buffer = arrow_alloc.buffer,
+          .offset = arrow_alloc.offset,
+          .range = current_arrows.byte_count(),};
+      vk::WriteDescriptorSet arrow_write{
+          .dstSet = vk_arrow_ds[current_frame],
+          .dstBinding = 0,
+          .dstArrayElement = 0,
+          .descriptorCount = 1,
+          .descriptorType = vk::DescriptorType::eStorageBuffer,
+          .pBufferInfo = &arrow_storage_info,
+      };
+      vk_device.updateDescriptorSets(arrow_write, {});
 
 
-      UniformBufferObject ubo{
+      ModelPC pc{
           .model = glm::rotate(glm::mat4(1.0f),
                                accumulated_time * glm::radians(90.0f),
                                glm::vec3(0.0f, 0.0f, 1.0f)),
+      };
+
+      CameraUBO camera_ubo{
           .view = camera.view(),
           .proj =
           glm::perspective(glm::radians(45.0f),
@@ -922,8 +956,8 @@ int main() {
                            0.1f,
                            10.0f),
       };
-      ubo.proj[1][1] *= -1;
-      MemoryCopy(vk_uniform_buffers_mapped[current_frame], &ubo, sizeof(ubo));
+      camera_ubo.proj[1][1] *= -1;
+      MemoryCopy(vk_camera_ub_mapped[current_frame], &camera_ubo, sizeof(camera_ubo));
 
 
       //~ Imgui UI
@@ -1013,10 +1047,11 @@ int main() {
       vk_cmd.bindVertexBuffers(0, vk_vertex_buffer, {0});
       vk_cmd.bindIndexBuffer(vk_index_buffer, 0, vk::IndexTypeValue<decltype(indices)::value_type>::value);
       vk_cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics,
-                                vk_ubo_and_sampler_layout,
+                                mesh_pipe_layout,
                                 0,
-                                vk_descriptor_sets[current_frame],
+                                {vk_camera_ds[current_frame], vk_mesh_ds[current_frame]},
                                 nullptr);
+      vk_cmd.pushConstants(mesh_pipe_layout, vk::ShaderStageFlagBits::eVertex, 0, sizeof(ModelPC), &pc);
       vk_cmd.drawIndexed(indices.size, 1, 0, 0, 0);
 
 
@@ -1027,20 +1062,20 @@ int main() {
                                {line_alloc.offset
                                });
       vk_cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics,
-                                vk_ubo_and_sampler_layout,
+                                line_pipe_layout,
                                 0,
-                                vk_descriptor_sets[current_frame],
+                                vk_camera_ds[current_frame],
                                 nullptr);
       vk_cmd.draw(line_vertices.size(), 1, 0, 0);
 
       //~ arrows
-      // vk_cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, vk_arrow_pipeline);
-      // vk_cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics,
-      // arrow_layout,
-      // 0,
-      // arrow_descriptor_sets[current_frame],
-      // nullptr);
-      // vk_cmd.draw(Arrow::vertex_count_per_arrow(), current_arrows.size(), 0, 0);
+      vk_cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, vk_arrow_pipeline);
+      vk_cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics,
+                                arrow_pipe_layout,
+                                0,
+                                {vk_camera_ds[current_frame], vk_arrow_ds[current_frame]},
+                                nullptr);
+      vk_cmd.draw(Arrow::vertex_count_per_arrow(), current_arrows.size(), 0, 0);
 
       vk_cmd.endRendering();
 

@@ -4,13 +4,18 @@ struct VSInput {
     float2 in_tex_coord;
 };
 
-struct UniformBuffer {
-    float4x4 model;
+struct CameraUBO {
     float4x4 view;
     float4x4 proj;
 };
-ConstantBuffer<UniformBuffer> ubo;
-Sampler2D texture;
+struct ModelPC {
+    float4x4 model;
+}
+
+[[vk::binding(0,0)]] ConstantBuffer<CameraUBO> camera_ubo;
+[[vk::binding(0,1)]] Sampler2D texture;
+[[vk::push_constant]] ModelPC model_pc;
+
 
 struct VSOutput {
     float4 pos : SV_Position;
@@ -21,7 +26,7 @@ struct VSOutput {
 [shader("vertex")]
 VSOutput vert_main(VSInput input) {
     VSOutput output;
-    output.pos = mul(ubo.proj, mul(ubo.view, mul(ubo.model, float4(input.in_position, 1.0))));
+    output.pos = mul(camera_ubo.proj, mul(camera_ubo.view, mul(model_pc.model, float4(input.in_position, 1.0))));
     output.color = input.in_color;
     output.frag_tex_coord = input.in_tex_coord;
     return output;

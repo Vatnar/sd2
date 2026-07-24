@@ -292,7 +292,7 @@ struct PreRasterLibDesc {
   vk::FrontFace front_face{vk::FrontFace::eCounterClockwise};
   bool depth_bias{false};
   F32 line_width{1.0f};
-  vk::DynamicState const *dynamic_states{nullptr};
+  ArraySlice<vk::DynamicState> dynamic_states{};
   U32 dynamic_state_count{0};
 };
 

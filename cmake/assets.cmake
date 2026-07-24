@@ -29,7 +29,7 @@ function(add_slang_shader_target TARGET)
     add_custom_target(${TARGET} DEPENDS ${ALL_OUTPUTS})
 endfunction()
 
-set(SHADER_SLANG_SOURCES assets/shaders/shader.slang assets/shaders/line.slang)
+set(SHADER_SLANG_SOURCES assets/shaders/shader.slang assets/shaders/line.slang assets/shaders/proc_arrow.slang)
 add_slang_shader_target(spirv_shaders SOURCES ${SHADER_SLANG_SOURCES})
 
 file(GLOB_RECURSE TEXTURE_SOURCES RELATIVE ${CMAKE_CURRENT_SOURCE_DIR}/assets/textures
